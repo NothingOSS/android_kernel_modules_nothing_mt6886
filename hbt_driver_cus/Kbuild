@@ -1,0 +1,16 @@
+MTK_TOP = $(srctree)/drivers/misc/mediatek/
+
+ifeq ($(CONFIG_MTK_HBT),m)
+ccflags-y += -DCONFIG_MTK_HBT
+subdir-ccflags-y += -DCONFIG_MTK_HBT
+endif
+
+ccflags-y += \
+	     -I$(srctree)/include/ \
+	     -I$(MTK_TOP)/include/ \
+
+obj-m += hbt.o
+hbt-y += src/hbt.o
+
+KO_CODE_PATH := $(if $(filter /%,$(src)),,$(srctree)/)$(src)
+REL_PREBUILT_O_PATH := $(shell bash $(srctree)/scripts/get_rel_path.sh $(KO_CODE_PATH) $(obj))
