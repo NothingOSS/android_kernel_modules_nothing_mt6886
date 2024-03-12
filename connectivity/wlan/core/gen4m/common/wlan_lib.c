@@ -7584,8 +7584,9 @@ void wlanInitFeatureOption(struct ADAPTER *prAdapter)
 	 */
 	prWifiVar->ucStaBandwidth = (uint8_t) wlanCfgGetUint32(
 				prAdapter, "StaBw", MAX_BW_320_2MHZ);
+	//2.4G WIFI 40MHZ requirements modify
 	prWifiVar->ucSta2gBandwidth = (uint8_t) wlanCfgGetUint32(
-				prAdapter, "Sta2gBw", MAX_BW_20MHZ);
+				prAdapter, "Sta2gBw", MAX_BW_40MHZ);
 	prWifiVar->ucSta5gBandwidth = (uint8_t) wlanCfgGetUint32(
 				prAdapter, "Sta5gBw", MAX_BW_160MHZ);
 	prWifiVar->ucSta6gBandwidth = (uint8_t) wlanCfgGetUint32(

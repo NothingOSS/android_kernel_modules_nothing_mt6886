@@ -1747,6 +1747,8 @@ void nicRxProcessPacketToHost(struct ADAPTER *prAdapter,
 
 	if (ucBssIndex < MAX_BSSID_NUM)
 		GET_BOOT_SYSTIME(&prRxCtrl->u4LastRxTime[ucBssIndex]);
+
+	secCheckRxEapolPacketEncryption(prAdapter, prRetSwRfb, prStaRec);
 }
 
 void nicRxIndicatePackets(struct ADAPTER *prAdapter,

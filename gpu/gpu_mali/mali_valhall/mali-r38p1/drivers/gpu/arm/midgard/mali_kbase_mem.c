@@ -1774,7 +1774,7 @@ int kbase_gpu_mmap(struct kbase_context *kctx, struct kbase_va_region *reg,
 					reg->flags & gwt_mask, kctx->as_nr,
 					group_id, mmu_sync_info);
 				if (err)
-					goto bad_insert;
+					goto bad_aliased_insert;
 
 				/* Note: mapping count is tracked at alias
 				 * creation time
@@ -1788,7 +1788,7 @@ int kbase_gpu_mmap(struct kbase_context *kctx, struct kbase_va_region *reg,
 					group_id, mmu_sync_info);
 
 				if (err)
-					goto bad_insert;
+					goto bad_aliased_insert;
 			}
 		}
 	} else {
@@ -1829,10 +1829,19 @@ int kbase_gpu_mmap(struct kbase_context *kctx, struct kbase_va_region *reg,
 
 	return err;
 
-bad_insert:
-	kbase_mmu_teardown_pages(kctx->kbdev, &kctx->mmu, reg->start_pfn, alloc->pages,
-				 reg->nr_pages, kctx->as_nr);
+bad_aliased_insert:
+	while (i-- > 0) {
+		struct tagged_addr *phys_alloc = NULL;
+		u64 const stride = alloc->imported.alias.stride;
+		if (alloc->imported.alias.aliased[i].alloc != NULL)
+			phys_alloc = alloc->imported.alias.aliased[i].alloc->pages +
+				     alloc->imported.alias.aliased[i].offset;
 
+		kbase_mmu_teardown_pages(kctx->kbdev, &kctx->mmu, reg->start_pfn + (i * stride),
+				 phys_alloc, alloc->imported.alias.aliased[i].length,
+				 kctx->as_nr);
+	}
+bad_insert:
 	kbase_remove_va_region(kctx->kbdev, reg);
 
 	return err;
@@ -4066,9 +4075,6 @@ static int kbase_jit_grow(struct kbase_context *kctx,
 	if (reg->gpu_alloc->nents >= info->commit_pages)
 		goto done;
 
-	/* Grow the backing */
-	old_size = reg->gpu_alloc->nents;
-
 	/* Allocate some more pages */
 	delta = info->commit_pages - reg->gpu_alloc->nents;
 	pages_required = delta;
@@ -4114,6 +4120,18 @@ static int kbase_jit_grow(struct kbase_context *kctx,
 		spin_lock(&kctx->mem_partials_lock);
 		kbase_mem_pool_lock(pool);
 	}
+
+	if (reg->gpu_alloc->nents > info->commit_pages) {
+		kbase_mem_pool_unlock(pool);
+		spin_unlock(&kctx->mem_partials_lock);
+		dev_warn(
+			kctx->kbdev->dev,
+			"JIT alloc grown beyond the required number of initially required pages, this grow no longer needed.");
+		goto done;
+	}
+
+	old_size = reg->gpu_alloc->nents;
+	delta = info->commit_pages - old_size;
 
 	gpu_pages = kbase_alloc_phy_pages_helper_locked(reg->gpu_alloc, pool,
 			delta, &prealloc_sas[0]);

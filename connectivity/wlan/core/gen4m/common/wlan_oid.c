@@ -121,6 +121,71 @@ static void SetTestChannel(uint8_t *pucPrimaryChannel);
  *                              F U N C T I O N S
  ******************************************************************************
  */
+//sar requirements modify
+#if CFG_SUPPORT_DYNAMIC_PWR_LIMIT
+static struct PARAM_TX_PWR_CTRL_IOCTL g_stPwrCtrlParam = {0};
+static void wlanoidSaveTxPowerControlParam(struct PARAM_TX_PWR_CTRL_IOCTL *prPwrCtrlParam)
+{
+	if (!prPwrCtrlParam) {
+		kalMemCopy((uint8_t *)&g_stPwrCtrlParam, (uint8_t *)prPwrCtrlParam,
+					sizeof(struct PARAM_TX_PWR_CTRL_IOCTL));
+	}
+}
+
+static void wlanoidUpdateTxPowerControlParam(struct ADAPTER *prAdapter)
+{
+	struct PARAM_TX_PWR_CTRL_IOCTL *prPwrCtrlParam = &g_stPwrCtrlParam;
+	struct TX_PWR_CTRL_ELEMENT *oldElement;
+	u_int8_t fgApplied;
+
+	if ((prPwrCtrlParam == NULL) || (prPwrCtrlParam->name == NULL)) {
+		DBGLOG(OID, ERROR, "prPwrCtrlParam is NULL\n");
+		return;
+	}
+
+	DBGLOG(OID, INFO, "fgApplied: %d, name: %s, index:%d\n",
+			prPwrCtrlParam->fgApplied, prPwrCtrlParam->name, prPwrCtrlParam->index);
+
+	fgApplied = prPwrCtrlParam->fgApplied;
+	oldElement = txPwrCtrlFindElement(prAdapter,
+						prPwrCtrlParam->name, 0, TRUE,
+						PWR_CTRL_TYPE_DYNAMIC_LIST);
+	if (oldElement != NULL) {
+		oldElement->fgApplied = FALSE;
+	}
+
+	if (fgApplied == TRUE) {
+		oldElement = txPwrCtrlFindElement(prAdapter,
+				prPwrCtrlParam->name, prPwrCtrlParam->index,
+				FALSE, PWR_CTRL_TYPE_DYNAMIC_LIST);
+		if (oldElement != NULL) {
+			if (prPwrCtrlParam->newSetting != NULL) {
+				struct TX_PWR_CTRL_ELEMENT *newElement;
+				DBGLOG(OID, INFO, "prepare set newSetting\n");
+				newElement = txPwrCtrlStringToStruct(
+					prPwrCtrlParam->newSetting, TRUE);
+				if (newElement == NULL) {
+					DBGLOG(OID, ERROR,
+						"parse new setting fail, <%s>\n",
+						prPwrCtrlParam->newSetting);
+					return;
+				}
+
+				kalMemCopy(newElement->name, oldElement->name,
+					MAX_TX_PWR_CTRL_ELEMENT_NAME_SIZE);
+				newElement->index = oldElement->index;
+				newElement->eCtrlType = oldElement->eCtrlType;
+				txPwrCtrlDeleteElement(prAdapter,
+					newElement->name, newElement->index,
+					PWR_CTRL_TYPE_DYNAMIC_LIST);
+				oldElement = newElement;
+				txPwrCtrlAddElement(prAdapter, oldElement);
+			}
+			oldElement->fgApplied = TRUE;
+		}
+	}
+}
+#endif
 static void setApUapsdEnable(struct ADAPTER *prAdapter,
 			     u_int8_t enable)
 {
@@ -12467,7 +12532,11 @@ wlanoidSetCountryCode(struct ADAPTER *prAdapter,
 
 	prAdapter->rWifiVar.u2CountryCode =
 		(((uint16_t) pucCountry[0]) << 8) | ((uint16_t) pucCountry[1]);
-
+//sar requirements modify
+#if CFG_SUPPORT_DYNAMIC_PWR_LIMIT
+	txPwrCtrlGlobalVariableToListByCountryCode(prAdapter);
+	wlanoidUpdateTxPowerControlParam(prAdapter);
+#endif
 	/* Force to re-search country code in regulatory domains */
 	prAdapter->prDomainInfo = NULL;
 	rlmDomainSendCmd(prAdapter, TRUE);
@@ -17100,7 +17169,8 @@ uint32_t wlanoidTxPowerControl(struct ADAPTER *prAdapter,
 		DBGLOG(OID, ERROR, "prPwrCtrlParam is NULL\n");
 		return WLAN_STATUS_FAILURE;
 	}
-
+//sar requirements modify
+	wlanoidSaveTxPowerControlParam(prPwrCtrlParam);
 	fgApplied = prPwrCtrlParam->fgApplied;
 
 	oldElement = txPwrCtrlFindElement(prAdapter,

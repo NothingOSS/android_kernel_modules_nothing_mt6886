@@ -3857,21 +3857,34 @@ kalSecurityFrameClassifier(struct GLUE_INFO *prGlueInfo,
 	pucEapol = pucIpHdr;
 
 	if (u2EthType == ETH_P_1X) {
-
+		struct STA_RECORD *prStaRec;
 		ucEapolType = pucEapol[1];
 
-		/* Leave EAP to check */
-		ucEAPoLKey = aucLookAheadBuf[1 + ucEapOffset];
-		if (ucEAPoLKey != ETH_EAPOL_KEY)
-			prTxPktInfo->u2Flag |= BIT(ENUM_PKT_NON_PROTECTED_1X);
-		else {
-			WLAN_GET_FIELD_BE16(&aucLookAheadBuf[5 + ucEapOffset],
-					    &u2KeyInfo);
-			/* BIT3 is pairwise key bit */
-			DBGLOG(TX, INFO, "u2KeyInfo=%d\n", u2KeyInfo);
-			if (u2KeyInfo & BIT(3))
+		prStaRec = cnmGetStaRecByAddress(prGlueInfo->prAdapter,
+				GLUE_GET_PKT_BSS_IDX(prPacket),
+				aucLookAheadBuf);
+
+		if (((prStaRec && prStaRec->fgTransmitKeyExist &&
+				prStaRec->fgIsEapEncrypt) || prStaRec->fgIsTxAllowed) &&
+				(ucEAPoLKey != ETH_EAPOL_KEY)) {
+			/* Encrypt EAP frames if AIS connected and with a key */
+			DBGLOG(TX, INFO, "Encrypt EAP packets\n");
+		} else {
+			/* Leave EAP to check */
+			ucEAPoLKey = aucLookAheadBuf[1 + ucEapOffset];
+			if (ucEAPoLKey != ETH_EAPOL_KEY)
 				prTxPktInfo->u2Flag |=
 					BIT(ENUM_PKT_NON_PROTECTED_1X);
+			else {
+				WLAN_GET_FIELD_BE16(
+					&aucLookAheadBuf[5 + ucEapOffset],
+					&u2KeyInfo);
+				/* BIT3 is pairwise key bit */
+				DBGLOG(TX, INFO, "u2KeyInfo=%d\n", u2KeyInfo);
+				if (u2KeyInfo & BIT(3))
+					prTxPktInfo->u2Flag |=
+						BIT(ENUM_PKT_NON_PROTECTED_1X);
+			}
 		}
 
 		ucSeqNo = nicIncreaseTxSeqNum(prGlueInfo->prAdapter);

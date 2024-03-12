@@ -1505,3 +1505,36 @@ void secHandleNoWtbl(struct ADAPTER *prAdapter,
 		DBGLOG(RX, TRACE,
 			"not find station record base on TA\n");
 }
+
+void secCheckRxEapolPacketEncryption(struct ADAPTER *prAdapter,
+	struct SW_RFB *prRetSwRfb,
+	struct STA_RECORD *prStaRec)
+{
+	uint8_t *pucPkt = NULL;
+	uint16_t u2EtherType;
+	uint16_t u2FrameCtrl = 0;
+
+	if (!prStaRec)
+		return;
+
+	if (prRetSwRfb->u2PacketLen <= ETHER_HEADER_LEN)
+		return;
+
+	pucPkt = prRetSwRfb->pvHeader;
+	if (!pucPkt)
+		return;
+
+	u2EtherType = (pucPkt[ETH_TYPE_LEN_OFFSET] << 8)
+		| (pucPkt[ETH_TYPE_LEN_OFFSET + 1]);
+	if (u2EtherType != ETH_P_1X)
+		return;
+
+	if (prRetSwRfb->fgHdrTran == FALSE)
+		u2FrameCtrl = ((struct WLAN_MAC_HEADER *)
+			prRetSwRfb->pvHeader)->u2FrameCtrl;
+	else if (prRetSwRfb->prRxStatusGroup4)
+		u2FrameCtrl = HAL_RX_STATUS_GET_FRAME_CTL_FIELD(
+			prRetSwRfb->prRxStatusGroup4);
+
+	prStaRec->fgIsEapEncrypt = RXM_IS_PROTECTED_FRAME(u2FrameCtrl);
+}
