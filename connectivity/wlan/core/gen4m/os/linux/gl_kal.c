@@ -1055,6 +1055,9 @@ void kalUpdateRxCSUMOffloadParam(void *pvPacket,
 void kalPacketFree(struct GLUE_INFO *prGlueInfo,
 		   void *pvPacket)
 {
+	if (prGlueInfo)
+		RX_INC_CNT(&prGlueInfo->prAdapter->rRxCtrl,
+			   RX_PACKET_FREE_COUNT);
 	dev_kfree_skb((struct sk_buff *)pvPacket);
 }
 
@@ -1102,6 +1105,8 @@ void *kalPacketAlloc(struct GLUE_INFO *prGlueInfo,
 		*ppucData = (uint8_t *) (prSkb->data);
 
 		kalResetPacket(prGlueInfo, (void *) prSkb);
+		RX_INC_CNT(&prGlueInfo->prAdapter->rRxCtrl,
+			   RX_PACKET_ALLOC_COUNT);
 	}
 #if DBG
 	{
@@ -9905,14 +9910,17 @@ static uint32_t kalPerMonUpdate(struct ADAPTER *prAdapter)
 #endif /* CFG_RFB_TRACK */
 
 #define TEMP_LOG_TEMPLATE \
-	"ndevdrp:%s NAPI[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu] " \
+	"ndevdrp:%s NAPI[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu] " \
 	RRO_LOG_TEMPLATE \
 	"RxReorder[%s] " \
 	RRB_TRACK_TEMPLATE \
-	"drv[RM,IL,RI,RT,RM,RW,RA,RB,DT,NS,IB,HS,LS,DD,ME,BD,NI," \
-	"DR,TE,PE,CE,DN,FE,DE,IE,TME,ID,NL]:%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu," \
-	"%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu," \
-	"%lu,%lu,%lu\n"
+	"drv[RM,IL,RI,PA,PF,DU,DA,RT,RM,RW,RA,RB,DT,NS," \
+	"IB,HS,LS,DD,ME,BD,NI,DR,TE,PE," \
+	"CE,DN,FE,DE,IE,TME,ID,NL]:" \
+	"%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu," \
+	"%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu," \
+	"%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu," \
+	"%lu,%lu\n" \
 
 	DBGLOG(SW4, INFO, TEMP_LOG_TEMPLATE,
 		head3,
@@ -9920,6 +9928,7 @@ static uint32_t kalPerMonUpdate(struct ADAPTER *prAdapter)
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_TASKLET_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_WORK_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_SCHEDULE_COUNT),
+		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_LEGACY_SCHED_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_FIFO_IN_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_FIFO_OUT_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_FIFO_FULL_COUNT),
@@ -9968,6 +9977,10 @@ static uint32_t kalPerMonUpdate(struct ADAPTER *prAdapter)
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_MPDU_TOTAL_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_ICS_LOG_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_DATA_INDICATION_COUNT),
+		RX_GET_CNT(&prAdapter->rRxCtrl, RX_PACKET_ALLOC_COUNT),
+		RX_GET_CNT(&prAdapter->rRxCtrl, RX_PACKET_FREE_COUNT),
+		RX_GET_CNT(&prAdapter->rRxCtrl, RX_DATA_RETURNED_COUNT),
+		RX_GET_CNT(&prAdapter->rRxCtrl, RX_DATA_RETAINED_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl,	RX_DATA_REORDER_TOTAL_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl,	RX_DATA_REORDER_MISS_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl,	RX_DATA_REORDER_WITHIN_COUNT),
@@ -12570,7 +12583,10 @@ static int kalNapiPollSwRfb(struct napi_struct *napi, int budget)
 end:
 	GLUE_DEC_REF_CNT(i4UserCnt);
 
-	kal_napi_complete_done(napi, work_done);
+#if !CFG_SUPPORT_RX_GRO_PEAK
+	if (work_done < budget)
+#endif
+		kal_napi_complete_done(napi, work_done);
 
 	return work_done;
 }
@@ -12619,6 +12635,7 @@ int kalNapiPoll(struct napi_struct *napi, int budget)
 	/* follow timeout rule in net_rx_action() */
 	const unsigned long ulTimeLimit = jiffies + 2;
 #endif
+	static int32_t i4UserCnt;
 
 	/* Added in qmHandleReorderBubbleTimeout */
 	while (prReorderQueParm =
@@ -12636,6 +12653,10 @@ int kalNapiPoll(struct napi_struct *napi, int budget)
 		/* Handle SwRFBs under RX-direct mode */
 		return kalNapiPollSwRfb(napi, budget);
 	}
+
+	/* Allow one user only */
+	if (GLUE_INC_REF_CNT(i4UserCnt) > 1)
+		goto end;
 
 	prRxNapiSkbQ = &prGlueInfo->rRxNapiSkbQ;
 	prFlushSkbQ = &rFlushSkbQ;
@@ -12662,7 +12683,7 @@ next_try:
 			DBGLOG(RX, ERROR, "skb NULL %d %d\n",
 				work_done, skb_queue_len(prFlushSkbQ));
 			kal_napi_complete_done(napi, work_done);
-			return work_done;
+			goto end;
 		}
 
 		/*
@@ -12695,19 +12716,19 @@ next_try:
 
 	/* Debug check only */
 	if (!time_before_eq(jiffies, ulTimeLimit))
-		DBGLOG(RX, WARN, "timeout hit %d\n", jiffies-ulTimeLimit);
-
-	if (work_done > budget)
-		work_done = budget;
-
-	kal_napi_complete_done(napi, work_done);
-#else /* CFG_SUPPORT_RX_GRO_PEAK */
-	if (work_done < budget) {
-		kal_napi_complete_done(napi, work_done);
-		if (skb_queue_len(prRxNapiSkbQ))
-			napi_schedule(napi);
-	}
+		DBGLOG_LIMITED(RX, WARN, "timeout hit %lu\n",
+			jiffies-ulTimeLimit);
 #endif /* CFG_SUPPORT_RX_GRO_PEAK */
+
+	work_done = kal_min_t(int, work_done, budget-1);
+	kal_napi_complete_done(napi, work_done);
+	if (skb_queue_len(prRxNapiSkbQ)) {
+		RX_INC_CNT(&prAdapter->rRxCtrl, RX_NAPI_LEGACY_SCHED_COUNT);
+		napi_schedule(napi);
+	}
+
+end:
+	GLUE_DEC_REF_CNT(i4UserCnt);
 	return work_done;
 #else /* CFG_SUPPORT_RX_NAPI */
 	return 0;
