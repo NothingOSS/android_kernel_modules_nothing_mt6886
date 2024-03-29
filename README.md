@@ -4,3 +4,5 @@
   - Kernel modules path
      - vendor/mediatek/kernel_modules/
 
+2. OS 2.5.4.a
+  - Fix Wlan/BT issue
