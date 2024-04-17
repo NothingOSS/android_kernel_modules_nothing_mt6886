@@ -9,3 +9,6 @@
 
 3. OS.2.5.4.b
   - No update
+
+4. OS.2.5.5
+  - Fix wlan issue
