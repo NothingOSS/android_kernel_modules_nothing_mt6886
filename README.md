@@ -6,3 +6,6 @@
 
 2. OS 2.5.4.a
   - Fix Wlan/BT issue
+
+3. OS.2.5.4.b
+  - No update
