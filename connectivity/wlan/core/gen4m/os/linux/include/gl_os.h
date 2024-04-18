@@ -775,6 +775,10 @@ struct GLUE_INFO {
 	struct task_struct *rx_thread;
 
 #endif
+#if CFG_SUPPORT_RX_NAPI_THREADED
+	uint32_t u4RxNapiThreadPid;
+	struct task_struct *napi_thread;
+#endif /* CFG_SUPPORT_RX_NAPI_THREADED */
 	/* cpu statistics */
 	atomic_t aCpuStatCnt[CPU_STATISTICS_MAX][CPU_CNT_MAX];
 #if CFG_SUPPORT_TX_WORK

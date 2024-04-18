@@ -291,6 +291,7 @@ struct BOOST_INFO {
 	struct THREAD_INFO rHifThreadInfo;
 	struct THREAD_INFO rMainThreadInfo;
 	struct THREAD_INFO rRxThreadInfo;
+	struct THREAD_INFO rRxNapiThreadInfo;
 	uint32_t u4RpsMap;
 	uint32_t u4ISRMask;
 	int32_t i4TxFreeMsduWorkCpu;
@@ -2354,6 +2355,7 @@ void kal_gro_flush(struct ADAPTER *prAdapter);
 void kal_napi_schedule(struct napi_struct *n);
 int kalNapiPoll(struct napi_struct *napi, int budget);
 uint8_t kalNapiInit(struct GLUE_INFO *prGlueInfo);
+uint8_t kalNapiUninit(struct GLUE_INFO *prGlueInfo);
 uint8_t kalNapiRxDirectInit(struct GLUE_INFO *prGlueInfo);
 uint8_t kalNapiRxDirectUninit(struct GLUE_INFO *prGlueInfo);
 uint8_t kalNapiEnable(struct GLUE_INFO *prGlueInfo);
