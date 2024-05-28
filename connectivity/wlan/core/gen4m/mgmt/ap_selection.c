@@ -82,12 +82,6 @@
 #define RSSI_MAX_LEVEL                          -55
 #define RSSI_SECOND_LEVEL                       -66
 
-#if (CFG_TC10_FEATURE == 1)
-#define RCPI_FOR_DONT_ROAM                      80 /*-70dbm*/
-#else
-#define RCPI_FOR_DONT_ROAM                      60 /*-80dbm*/
-#endif
-
 /* Real Rssi of a Bss may range in current_rssi - 5 dbm
  *to current_rssi + 5 dbm
  */

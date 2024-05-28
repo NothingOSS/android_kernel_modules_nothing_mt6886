@@ -132,6 +132,12 @@
 #define IS_AIS_ROAMING(_adapter, _bss_idx) \
 	aisGetAisFsmInfo(_adapter, _bss_idx)->ucIsStaRoaming
 
+#if (CFG_TC10_FEATURE == 1)
+#define RCPI_FOR_DONT_ROAM                      80 /*-70dbm*/
+#else
+#define RCPI_FOR_DONT_ROAM                      60 /*-80dbm*/
+#endif
+
 #define AIS_BTM_DIS_IMMI_TIMEOUT	    10000 /* MSEC */
 #define AIS_BTM_DIS_IMMI_STATE_0	    0
 #define AIS_BTM_DIS_IMMI_STATE_1	    1

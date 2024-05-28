@@ -1213,7 +1213,8 @@ void aisCheckPmkidCache(struct ADAPTER *prAdapter, struct BSS_DESC *prBss,
 	struct CONNECTION_SETTINGS *prConnSettings;
 	uint32_t u4Bmap;
 
-	if (!prBss)
+	/* Skip low rssi AP which won't select to roam */
+	if (!prBss || prBss->ucRCPI < RCPI_FOR_DONT_ROAM)
 		return;
 
 	prAisFsmInfo = aisFsmGetInstance(prAdapter, ucAisIndex);

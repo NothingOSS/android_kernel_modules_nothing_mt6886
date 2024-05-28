@@ -1610,11 +1610,13 @@ int wlan_pre_whole_chip_rst_v3(enum connv3_drv_type drv,
 			"Wi-Fi on/off process is ongoing, wait here.\n");
 		msleep(100);
 	}
-
+	wfsys_lock();
 	if (!get_wifi_powered_status()) {
 		DBGLOG(REQ, WARN, "wifi driver is off now\n");
+		wfsys_unlock();
 		return 0;
 	}
+	wfsys_unlock();
 
 	WIPHY_PRIV(wlanGetWiphy(), prGlueInfo);
 	prAdapter = prGlueInfo->prAdapter;
