@@ -12,3 +12,6 @@
 
 4. OS.2.5.5
   - Fix wlan issue
+
+5. OS.2.5.5.a
+  - Merge the patch for BTS fail
