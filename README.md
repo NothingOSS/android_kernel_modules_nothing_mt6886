@@ -18,3 +18,7 @@
 
 6. OS.2.5.6
   - Fix wlan issue
+
+7. OS 2.6
+  - Fix wlan issue
+
