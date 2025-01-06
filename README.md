@@ -22,3 +22,6 @@
 7. OS 2.6
   - Fix wlan issue
 
+8. OS 2.6(Pacman-U2.6-20240828-1906)
+  - No update
+
