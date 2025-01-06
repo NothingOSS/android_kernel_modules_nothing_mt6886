@@ -25,3 +25,6 @@
 8. OS 2.6(Pacman-U2.6-20240828-1906)
   - No update
 
+9. OS 2.6(Pacman-U2.6-20241021-2253)
+  - No upadte
+
