@@ -237,7 +237,8 @@ kalP2PUpdateAssocInfo(struct GLUE_INFO *prGlueInfo,
 	else
 		prNetdevice = prGlueInfo->prP2PInfo
 			[prBssInfo->u4PrivateData]->aprRoleHandler;
-
+	if (!prNetdevice)
+		return;
 	/* Send event to user space */
 	wireless_send_event(prNetdevice, IWEVASSOCREQIE, &wrqu, pucExtraInfo);
 }
