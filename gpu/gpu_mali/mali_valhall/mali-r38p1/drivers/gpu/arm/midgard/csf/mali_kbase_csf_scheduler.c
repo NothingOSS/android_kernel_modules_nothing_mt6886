@@ -4146,7 +4146,7 @@ static void scheduler_group_check_protm_enter(struct kbase_device *const kbdev,
 	bool protm_in_use;
 #if IS_ENABLED(CONFIG_MALI_MTK_ACP_SVP_WA)
 	int r_index, ret, i;
-	struct kbase_context *kctx;
+	struct kbase_context *kctx = input_grp->kctx;
 	struct kbase_va_region *reg;
 	dma_addr_t sync_dma_addr;
 	struct page *sync_page;
@@ -4160,7 +4160,7 @@ static void scheduler_group_check_protm_enter(struct kbase_device *const kbdev,
 	 * entry to protected mode happens with a memory region being locked and
 	 * the same region is then accessed by the GPU in protected mode.
 	 */
-	mutex_lock(&kbdev->mmu_hw_mutex);
+	down_write(&kbdev->csf.mmu_sync_sem);
 	spin_lock_irqsave(&scheduler->interrupt_lock, flags);
 
 	/* Check if the previous transition to enter & exit the protected
@@ -4215,43 +4215,39 @@ static void scheduler_group_check_protm_enter(struct kbase_device *const kbdev,
 					scheduler->apply_pmode_exit_wa = false;
 				} else {
 					spin_unlock_irqrestore(&scheduler->interrupt_lock, flags);
-					mutex_unlock(&kbdev->mmu_hw_mutex);
+					up_write(&kbdev->csf.mmu_sync_sem);
 					kbase_pm_apply_pmode_entry_wa(kbdev);
-					mutex_lock(&kbdev->mmu_hw_mutex);
+					down_write(&kbdev->csf.mmu_sync_sem);
 					spin_lock_irqsave(&scheduler->interrupt_lock, flags);
 				}
 
 #if IS_ENABLED(CONFIG_MALI_MTK_ACP_SVP_WA)
 				if (kbdev->system_coherency != COHERENCY_NONE) {
 					spin_unlock_irqrestore(&scheduler->interrupt_lock, flags);
-					mutex_lock(&kbdev->kctx_list_lock);
-					// loop for each kctx
-					list_for_each_entry(kctx, &kbdev->kctx_list, kctx_list_link) {
-						dev_vdbg(kbdev->dev, "kctx %p, pid %d,tid %d, coherent_regioon_nr: %u\n",
-							kctx, kctx->pid, kctx->tgid, kctx->coherent_region_nr);
-						if (kctx->pid == input_grp->kctx->pid) {
-							mutex_lock(&kctx->coherenct_region_lock);
-							// for each region in the kctx
-							for (r_index = 0; r_index < kctx->coherent_region_nr; r_index++) {
-								if (kctx->coherenct_regions[r_index] != NULL &&
-									(kctx->coherenct_regions[r_index])->cpu_alloc != NULL) {
-									reg = kctx->coherenct_regions[r_index];
-									//flush region page by page
-									for (i = 0 ; i < reg->gpu_alloc->nents; i++)
-									{
-										sync_pa = as_phys_addr_t(reg->gpu_alloc->pages[i]);
-										sync_page = pfn_to_page(PFN_DOWN(sync_pa));
-										sync_dma_addr = kbase_dma_addr(sync_page);
-										dma_sync_single_for_device(kbdev->dev,
-											sync_dma_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
-									}
+					dev_vdbg(kbdev->dev, "kctx %p, pid %d,tid %d, coherent_regioon_nr: %u\n",
+						kctx, kctx->pid, kctx->tgid, kctx->coherent_region_nr);
+
+					kbase_gpu_vm_lock(kctx);
+					mutex_lock(&kctx->coherenct_region_lock);
+					for (r_index = 0; r_index < kctx->coherent_region_nr; r_index++) {
+						if (kctx->coherenct_regions[r_index] != NULL &&
+							(kctx->coherenct_regions[r_index])->cpu_alloc != NULL) {
+								reg = kctx->coherenct_regions[r_index];
+								//flush region page by page
+								for (i = 0 ; i < reg->gpu_alloc->nents; i++)
+								{
+									sync_pa = as_phys_addr_t(reg->gpu_alloc->pages[i]);
+									sync_page = pfn_to_page(PFN_DOWN(sync_pa));
+									sync_dma_addr = kbase_dma_addr(sync_page);
+									dma_sync_single_for_device(kbdev->dev,
+									sync_dma_addr, PAGE_SIZE, DMA_BIDIRECTIONAL);
 								}
 							}
-						mutex_unlock(&kctx->coherenct_region_lock);
-						dev_vdbg(kbdev->dev, "Flushed kctx pid: %d, tgid: %d\n", kctx->pid, kctx->tgid);
 						}
-					}
-					mutex_unlock(&kbdev->kctx_list_lock);
+					mutex_unlock(&kctx->coherenct_region_lock);
+					kbase_gpu_vm_unlock(kctx);
+					dev_vdbg(kbdev->dev, "Flushed kctx pid: %d, tgid: %d\n", kctx->pid, kctx->tgid);
+
 					spin_lock_irqsave(&scheduler->interrupt_lock, flags);
 				}
 #endif
@@ -4268,7 +4264,7 @@ static void scheduler_group_check_protm_enter(struct kbase_device *const kbdev,
 				spin_unlock_irqrestore(&scheduler->interrupt_lock, flags);
 
 				kbase_csf_wait_protected_mode_enter(kbdev);
-				mutex_unlock(&kbdev->mmu_hw_mutex);
+				up_write(&kbdev->csf.mmu_sync_sem);
 
 				scheduler->protm_enter_time = ktime_get_raw();
 
@@ -4278,7 +4274,7 @@ static void scheduler_group_check_protm_enter(struct kbase_device *const kbdev,
 	}
 
 	spin_unlock_irqrestore(&scheduler->interrupt_lock, flags);
-	mutex_unlock(&kbdev->mmu_hw_mutex);
+	up_write(&kbdev->csf.mmu_sync_sem);
 }
 
 /**
@@ -7024,7 +7020,7 @@ void kbase_csf_scheduler_pm_idle(struct kbase_device *kbdev)
 }
 KBASE_EXPORT_TEST_API(kbase_csf_scheduler_pm_idle);
 
-int kbase_csf_scheduler_wait_mcu_active(struct kbase_device *kbdev)
+static int scheduler_wait_mcu_active(struct kbase_device *kbdev, bool killable_wait)
 {
 	struct kbase_csf_scheduler *const scheduler = &kbdev->csf.scheduler;
 	unsigned long flags;
@@ -7037,11 +7033,17 @@ int kbase_csf_scheduler_wait_mcu_active(struct kbase_device *kbdev)
 	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
 	kbase_pm_unlock(kbdev);
 
-	err = kbase_pm_wait_for_poweroff_work_complete(kbdev);
+	if (killable_wait)
+		err = kbase_pm_killable_wait_for_poweroff_work_complete(kbdev);
+	else
+		err = kbase_pm_wait_for_poweroff_work_complete(kbdev);
 	if (err)
 		return err;
 
-	err = kbase_pm_wait_for_desired_state(kbdev);
+	if (killable_wait)
+		err = kbase_pm_killable_wait_for_desired_state(kbdev);
+	else
+		err = kbase_pm_wait_for_desired_state(kbdev);
 	if (!err) {
 		spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
 #ifdef CONFIG_MALI_MTK_DEBUG
@@ -7055,6 +7057,17 @@ int kbase_csf_scheduler_wait_mcu_active(struct kbase_device *kbdev)
 
 	return err;
 }
+
+int kbase_csf_scheduler_killable_wait_mcu_active(struct kbase_device *kbdev)
+{
+	return scheduler_wait_mcu_active(kbdev, true);
+}
+
+int kbase_csf_scheduler_wait_mcu_active(struct kbase_device *kbdev)
+{
+	return scheduler_wait_mcu_active(kbdev, false);
+}
+
 KBASE_EXPORT_TEST_API(kbase_csf_scheduler_wait_mcu_active);
 
 #ifdef KBASE_PM_RUNTIME

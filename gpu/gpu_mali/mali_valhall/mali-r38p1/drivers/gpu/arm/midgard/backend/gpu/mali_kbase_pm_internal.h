@@ -224,7 +224,7 @@ void kbase_pm_reset_done(struct kbase_device *kbdev);
  * power off in progress and kbase_pm_context_active() was called instead of
  * kbase_csf_scheduler_pm_active().
  *
- * Return: 0 on success, error code on error
+ * Return: 0 on success, or -ETIMEDOUT code on timeout error.
  */
 int kbase_pm_wait_for_desired_state(struct kbase_device *kbdev);
 #else
@@ -247,10 +247,25 @@ int kbase_pm_wait_for_desired_state(struct kbase_device *kbdev);
  * must ensure that this is not the case by, for example, calling
  * kbase_pm_wait_for_poweroff_work_complete()
  *
- * Return: 0 on success, error code on error
+ * Return: 0 on success, or -ETIMEDOUT error code on timeout error.
  */
 int kbase_pm_wait_for_desired_state(struct kbase_device *kbdev);
 #endif
+
+/**
+ * kbase_pm_killable_wait_for_desired_state - Wait for the desired power state to be
+ *                                            reached in a killable state.
+ * @kbdev: The kbase device structure for the device (must be a valid pointer)
+ *
+ * This function is same as kbase_pm_wait_for_desired_state(), expect that it would
+ * allow the SIGKILL signal to interrupt the wait.
+ * This function is supposed to be called from the code that is executed in ioctl or
+ * Userspace context, wherever it is safe to do so.
+ *
+ * Return: 0 on success, or -ETIMEDOUT code on timeout error or -ERESTARTSYS if the
+ *         wait was interrupted.
+ */
+int kbase_pm_killable_wait_for_desired_state(struct kbase_device *kbdev);
 
 /**
  * kbase_pm_wait_for_l2_powered - Wait for the L2 cache to be powered on
@@ -471,6 +486,22 @@ void kbase_pm_release_gpu_cycle_counter_nolock(struct kbase_device *kbdev);
  * Return: 0 on success, error code on error
  */
 int kbase_pm_wait_for_poweroff_work_complete(struct kbase_device *kbdev);
+
+/**
+ * kbase_pm_killable_wait_for_poweroff_work_complete - Wait for the poweroff workqueue to
+ *                                                     complete in killable state.
+ *
+ * @kbdev: The kbase device structure for the device (must be a valid pointer)
+ *
+ * This function is same as kbase_pm_wait_for_poweroff_work_complete(), expect that
+ * it would allow the SIGKILL signal to interrupt the wait.
+ * This function is supposed to be called from the code that is executed in ioctl or
+ * Userspace context, wherever it is safe to do so.
+ *
+ * Return: 0 on success, or -ETIMEDOUT code on timeout error or -ERESTARTSYS if the
+ *         wait was interrupted.
+ */
+int kbase_pm_killable_wait_for_poweroff_work_complete(struct kbase_device *kbdev);
 
 /**
  * kbase_pm_wait_for_gpu_power_down - Wait for the GPU power down to complete

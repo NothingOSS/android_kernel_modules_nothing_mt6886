@@ -411,6 +411,22 @@ void kbase_csf_scheduler_pm_idle(struct kbase_device *kbdev);
 int kbase_csf_scheduler_wait_mcu_active(struct kbase_device *kbdev);
 
 /**
+ * kbase_csf_scheduler_killable_wait_mcu_active - Wait for the MCU to actually become
+ *                                                active in killable state.
+ *
+ * @kbdev: Instance of a GPU platform device that implements a CSF interface.
+ *
+ * This function is same as kbase_csf_scheduler_wait_mcu_active(), expect that
+ * it would allow the SIGKILL signal to interrupt the wait.
+ * This function is supposed to be called from the code that is executed in ioctl or
+ * Userspace context, wherever it is safe to do so.
+ *
+ * Return: 0 if the MCU was successfully activated, or -ETIMEDOUT code on timeout error or
+ *        -ERESTARTSYS if the wait was interrupted.
+ */
+int kbase_csf_scheduler_killable_wait_mcu_active(struct kbase_device *kbdev);
+
+/**
  * kbase_csf_scheduler_pm_resume_no_lock - Reactivate the scheduler on system resume
  *
  * @kbdev: Instance of a GPU platform device that implements a CSF interface.

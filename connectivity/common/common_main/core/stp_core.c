@@ -679,6 +679,11 @@ VOID stp_do_tx_timeout(VOID)
 
 	STP_WARN_FUNC
 	    ("==============================================================================\n");
+	if (mtk_wcn_stp_is_wmt_last_close()) {
+		STP_WARN_FUNC("Return directly because wmt is closed.\n");
+		return;
+	}
+
 	osal_dump_thread_state("btif_rxd");
 	if (!mtk_wcn_stp_is_sdio_mode())
 		mtk_wcn_consys_stp_btif_logger_ctrl(BTIF_DUMP_BTIF_IRQ);
@@ -2554,8 +2559,7 @@ INT32 mtk_wcn_stp_set_wmt_last_close(UINT32 value)
 {
 	STP_INFO_FUNC("set wmt_last_close flag (%d)\n", value);
 
-	/* test whether last_close can be removed safely */
-	/* STP_SET_WMT_LAST_CLOSE(stp_core_ctx, value); */
+	STP_SET_WMT_LAST_CLOSE(stp_core_ctx, value);
 
 	return 0;
 }
@@ -2591,6 +2595,11 @@ INT32 mtk_wcn_stp_send_data(const PUINT8 buffer, const UINT32 length, const UINT
 
 	/* osal_buffer_dump(buffer,"tx", length, 32); */
 	osal_ftrace_print("%s|S|T%d|L%d\n", __func__, type, length);
+
+	if (length == 0) {
+		STP_WARN_FUNC("length is 0\n");
+		return 0;
+	}
 
 	if (STP_WMT_LAST_CLOSE(stp_core_ctx) != 0) {
 		STP_ERR_FUNC("WMT lats close,should not have tx request!\n");

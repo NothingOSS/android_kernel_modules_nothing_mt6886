@@ -660,7 +660,7 @@ long BT_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	INT32 retval = 0;
 	UINT32 reason = 0;
 	UINT32 ver = 0;
-	uint8_t host_dbg_buff[32]; //arg: id[0:3], value[4:7], desc[8:31]
+	uint8_t host_dbg_buff[32] = {0}; //arg: id[0:3], value[4:7], desc[8:31]
 	BT_LOG_PRT_DBG("cmd: 0x%08x\n", cmd);
 
 	if (_IOC_TYPE(cmd) != COMBO_IOC_MAGIC) {

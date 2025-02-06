@@ -1053,7 +1053,7 @@ INT32 mtk_wcn_consys_hw_init(VOID)
 	if (iRet)
 		WMT_PLAT_PR_ERR("WMT platform driver registered failed(%d)\n", iRet);
 	else {
-		while (atomic_read(&g_probe_called) == 0 && retry < 100) {
+		while (atomic_read(&g_probe_called) == 0) {
 			osal_sleep_ms(50);
 			retry++;
 			WMT_PLAT_PR_INFO("g_probe_called = 0, retry = %d\n", retry);

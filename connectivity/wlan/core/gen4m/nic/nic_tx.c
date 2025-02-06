@@ -2268,7 +2268,7 @@ nicTxFillDesc(struct ADAPTER *prAdapter,
 #if defined(_HIF_USB)
 		KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_DESC);
 #endif
-		DBGLOG_LIMITED(NIC, INFO, "Compose TXD by Msdu info\n");
+		DBGLOG_LIMITED(NIC, TRACE, "Compose TXD by Msdu info\n");
 #if (UNIFIED_MAC_TX_FORMAT == 1)
 		if (prMsduInfo->eSrc == TX_PACKET_MGMT) {
 #if (CFG_TX_MGMT_BY_DATA_Q == 1)
@@ -4032,6 +4032,12 @@ void nicTxProcessTxDoneEvent(struct ADAPTER *prAdapter,
 
 	prTxDone = (struct EVENT_TX_DONE *) (prEvent->aucBuffer);
 
+	if (prTxDone->ucStatus >= TX_RESULT_NUM) {
+		DBGLOG(TX, ERROR, "TxStatus out of range: %u!\n",
+			prTxDone->ucStatus);
+		return;
+	}
+
 /* fos_change begin */
 #if CFG_SUPPORT_EXCEPTION_STATISTICS
 	if (prTxDone->ucStatus != WLAN_STATUS_SUCCESS) {
@@ -5746,8 +5752,10 @@ static void nicTxDirectEnqueueStaPendQ(struct ADAPTER *prAdapter,
 	struct MSDU_INFO *prMsduInfo, uint8_t ucStaIdx, struct QUE *prQue)
 {
 	struct BSS_INFO *prBssInfo;
+	struct STA_RECORD *prStaRec;
 
 	KAL_SPIN_LOCK_DECLARATION();
+	prStaRec = cnmGetStaRecByIndex(prAdapter, ucStaIdx);
 
 	/* the add key isn't completed case */
 	if ((prMsduInfo == NULL) || (prAdapter == NULL))
@@ -5767,7 +5775,8 @@ static void nicTxDirectEnqueueStaPendQ(struct ADAPTER *prAdapter,
 		/* The EAPoL frame can't be blocked. */
 		DBGLOG(TX, TRACE, "Is EAPoL frame\n");
 	} else {
-		DBGLOG(TX, TRACE, "fgIsTxAllowed isn't TRUE!\n");
+		DBGLOG(TX, TRACE, "fgIsTxAllowed isn't TRUE!,reason =%d\n",
+			(prStaRec == NULL ? -1 : prStaRec->fgtxAllowReason));
 		KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_RESOURCE);
 		QUEUE_CONCATENATE_QUEUES(
 			&prAdapter->rStaPendQueue[ucStaIdx], prQue);

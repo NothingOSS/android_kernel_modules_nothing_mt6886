@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  * Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/mgmt/rlm_obss.c#2
  */
@@ -128,7 +82,8 @@ void rlmObssInit(struct ADAPTER *prAdapter)
 
 		cnmTimerInitTimer(prAdapter, &prBssInfo->rObssScanTimer,
 				  (PFN_MGMT_TIMEOUT_FUNC) rlmObssScanTimeout,
-				  (unsigned long) prBssInfo);
+				  (unsigned long) prBssInfo,
+				  TIMER_WAKELOCK_AUTO);
 	}
 }
 
@@ -384,7 +339,7 @@ void rlmObssTriggerScan(struct ADAPTER *prAdapter, struct BSS_INFO *prBssInfo)
 	 */
 	kalMemZero(prScanReqMsg, sizeof(struct MSG_SCN_SCAN_REQ_V2));
 	prScanReqMsg->rMsgHdr.eMsgId = MID_RLM_SCN_SCAN_REQ_V2;
-	prScanReqMsg->ucSeqNum = 0x33;
+	prScanReqMsg->ucSeqNum = OBSS_SCAN_SEQ_NUM;
 	prScanReqMsg->ucBssIndex = prBssInfo->ucBssIndex;
 	prScanReqMsg->eScanType = SCAN_TYPE_ACTIVE_SCAN;
 	prScanReqMsg->ucSSIDType = SCAN_REQ_SSID_WILDCARD;
@@ -397,4 +352,59 @@ void rlmObssTriggerScan(struct ADAPTER *prAdapter, struct BSS_INFO *prBssInfo)
 
 	DBGLOG(RLM, INFO, "Timeout to trigger OBSS scan (NetIdx=%d)!!\n",
 	       prBssInfo->ucBssIndex);
+}
+
+void rlmObssAbortScan(struct ADAPTER *prAdapter, uint8_t ucBssIndex)
+{
+	struct BSS_INFO *prBssInfo = NULL;
+	struct MSG_SCN_SCAN_CANCEL *prScanCancelMsg;
+
+	if (!prAdapter) {
+		DBGLOG(RLM, ERROR, "prAdapter == NULL\n");
+		return;
+	}
+
+	if (ucBssIndex >= prAdapter->ucHwBssIdNum) {
+		DBGLOG(RLM, ERROR,
+			"ucBssIndex %d >= ucHwBssIdNum %d\n",
+			ucBssIndex, prAdapter->ucHwBssIdNum);
+		return;
+	}
+
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter,
+			ucBssIndex);
+	if (!prBssInfo) {
+		DBGLOG(RLM, ERROR, "prBssInfo == NULL, ucBssIndex = %d\n",
+			ucBssIndex);
+		return;
+	}
+
+	DBGLOG(RLM, STATE, "[%d] rlmObssAbortScan\n",
+		ucBssIndex);
+
+
+	/* Abort obss process. */
+	prScanCancelMsg =
+	    (struct MSG_SCN_SCAN_CANCEL *)cnmMemAlloc(prAdapter, RAM_TYPE_MSG,
+		sizeof(struct MSG_SCN_SCAN_CANCEL));
+	if (!prScanCancelMsg) {
+
+		DBGLOG(RLM, ERROR, "Can't abort SCN FSM\n");
+		return;
+	}
+	kalMemZero(prScanCancelMsg, sizeof(struct MSG_SCN_SCAN_CANCEL));
+	prScanCancelMsg->rMsgHdr.eMsgId = MID_RLM_SCN_SCAN_CANCEL;
+	prScanCancelMsg->ucSeqNum = OBSS_SCAN_SEQ_NUM;
+	prScanCancelMsg->ucBssIndex = ucBssIndex;
+	prScanCancelMsg->fgIsChannelExt = FALSE;
+
+	cnmTimerStopTimer(prAdapter,
+		&prBssInfo->rObssScanTimer);
+	prBssInfo->u2ObssScanInterval = 0;
+
+
+	/* unbuffered message to guarantee scan is cancelled in sequence */
+	mboxSendMsg(prAdapter, MBOX_ID_0, (struct MSG_HDR *)prScanCancelMsg,
+		    MSG_SEND_METHOD_UNBUF);
+
 }

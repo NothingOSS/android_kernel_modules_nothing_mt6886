@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  * Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/mgmt/cnm.c#2
  */
@@ -463,7 +417,8 @@ void cnmInit(struct ADAPTER *prAdapter)
 	cnmTimerInitTimer(prAdapter,
 			&prAdapter->rRxCntMonitorTimer,
 			(PFN_MGMT_TIMEOUT_FUNC) cnmRxCntMonitor,
-			(unsigned long)NULL);
+			(unsigned long)NULL,
+			TIMER_WAKELOCK_AUTO);
 
 	prAdapter->fgMccFirstIn = true;
 
@@ -925,36 +880,60 @@ void cnmCsaDoneEvent(IN struct ADAPTER *prAdapter,
 {
 	struct BSS_INFO *prBssInfo;
 	struct MSG_P2P_CSA_DONE *prP2pCsaDoneMsg;
-	uint8_t ucBssIndex;
 
 	DBGLOG(CNM, INFO, "cnmCsaDoneEvent.\n");
 
-	prP2pCsaDoneMsg = (struct MSG_P2P_CSA_DONE *)
-			  cnmMemAlloc(
-				  prAdapter,
-				  RAM_TYPE_MSG, sizeof(*prP2pCsaDoneMsg));
+	/* fw may repeatedly send this event ,and drop repetitive */
+	if (prAdapter && (prAdapter->rWifiVar.fgCsaInProgress == FALSE)) {
+		DBGLOG(CNM, WARN, "Error cnmCsaDoneEvent report,Drop it!\n");
+		return;
+	}
+
+	/* 1. Clean up previous CSA parameters   */
+	/* 1.1 Clean up CSA IE related */
+	prAdapter->rWifiVar.fgCsaInProgress = FALSE;
+	prAdapter->rWifiVar.ucChannelSwitchMode = 0;
+	prAdapter->rWifiVar.ucNewChannelNumber = 0;
+	prAdapter->rWifiVar.ucChannelSwitchCount = 0;
+#if CFG_SUPPORT_P2P_CSA
+	/* 1.2 Clean up SCO IE related */
+	prAdapter->rWifiVar.ucSecondaryOffset = 0;
+	/* 1.3 Clean up Wide Bw IE related */
+	prAdapter->rWifiVar.ucNewChannelWidth = 0;
+	prAdapter->rWifiVar.ucNewChannelS1 = 0;
+	prAdapter->rWifiVar.ucNewChannelS2 = 0;
+
+	/* 2. Get Bss Info.
+	 * Note that we have either P2P or SAP now.
+	 * Flow might be changed if P2P/SAP existed
+	 * at the same time
+	 */
+	prBssInfo = cnmGetP2pBssInfo(prAdapter);
+
+	if (!prBssInfo)
+#endif
+	{
+		prBssInfo = cnmGetSapBssInfo(prAdapter);
+	}
+
+	if (!prBssInfo)
+		return;
+
+	/* 3. Send Mbox Msg */
+	prP2pCsaDoneMsg =
+		(struct MSG_P2P_CSA_DONE *) cnmMemAlloc(
+				prAdapter,
+				RAM_TYPE_MSG, sizeof(*prP2pCsaDoneMsg));
 
 	if (!prP2pCsaDoneMsg) {
-		log_dbg(CNM, ERROR,
+		DBGLOG(CNM, ERROR,
 		       "cnmMemAlloc for prP2pCsaDoneMsg failed!\n");
 		return;
 	}
 
-	prAdapter->rWifiVar.fgCsaInProgress = FALSE;
-
 	prP2pCsaDoneMsg->rMsgHdr.eMsgId = MID_CNM_P2P_CSA_DONE;
+	prP2pCsaDoneMsg->ucBssIndex = prBssInfo->ucBssIndex;
 
-	for (ucBssIndex = 0; ucBssIndex < BSS_DEFAULT_NUM;
-	     ucBssIndex++) {
-		prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter,
-						  ucBssIndex);
-
-		if (prBssInfo &&
-			(prBssInfo->eCurrentOPMode == OP_MODE_ACCESS_POINT)) {
-			prP2pCsaDoneMsg->ucBssIndex = ucBssIndex;
-			break;
-		}
-	}
 	DBGLOG(CNM, INFO, "cnmCsaDoneEvent.ucBssIndex=%d\n",
 		prP2pCsaDoneMsg->ucBssIndex);
 
@@ -1161,8 +1140,6 @@ uint8_t cnmIdcCsaReq(IN struct ADAPTER *prAdapter,
 	struct RF_CHANNEL_INFO rRfChnlInfo;
 	struct MSG_P2P_SET_NEW_CHANNEL *prP2pSetNewChannelMsg =
 		(struct MSG_P2P_SET_NEW_CHANNEL *) NULL;
-	struct MSG_P2P_BEACON_UPDATE *prP2pBcnUpdateMsg =
-		(struct MSG_P2P_BEACON_UPDATE *) NULL;
 
 	ASSERT(ch_num);
 	ASSERT(prGlueInfo);
@@ -1178,22 +1155,17 @@ uint8_t cnmIdcCsaReq(IN struct ADAPTER *prAdapter,
 
 	prBssInfo = prAdapter->aprBssInfo[ucBssIdx];
 
-
 	if (prBssInfo->ucPrimaryChannel != ch_num) {
+#if CFG_SUPPORT_P2P_CSA
+		kalMemZero(&rRfChnlInfo,
+			sizeof(struct RF_CHANNEL_INFO));
 
-		/* allocate chandef buffer to inform Kernel */
-		if (prGlueInfo->prP2PInfo[ucRoleIdx]->chandef == NULL) {
-			prGlueInfo->prP2PInfo[ucRoleIdx]->chandef =
-				(struct cfg80211_chan_def *)
-				cnmMemAlloc(prAdapter,
-				RAM_TYPE_BUF, sizeof(struct cfg80211_chan_def));
-
-			prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->chan =
-				(struct ieee80211_channel *)
-				cnmMemAlloc(prAdapter,
-				RAM_TYPE_BUF, sizeof(struct ieee80211_channel));
-		}
-
+		/* Get channel with max bandwidth */
+		rlmGetChnlInfoForCSA(prAdapter,
+			ch_num,
+			ucBssIdx,
+			&rRfChnlInfo);
+#else
 		/* Build New CH Info */
 		rRfChnlInfo.ucChannelNum = ch_num;
 		rRfChnlInfo.eBand =
@@ -1208,6 +1180,7 @@ uint8_t cnmIdcCsaReq(IN struct ADAPTER *prAdapter,
 			nicGetVhtS1(rRfChnlInfo.ucChannelNum,
 				prBssInfo->ucVhtChannelWidth);
 		rRfChnlInfo.u4CenterFreq2 = 0;
+#endif
 
 		DBGLOG(REQ, INFO,
 		"[CSA]CH=%d,Band=%d,BW=%d,PriFreq=%d,S1=%d\n",
@@ -1217,36 +1190,7 @@ uint8_t cnmIdcCsaReq(IN struct ADAPTER *prAdapter,
 			rRfChnlInfo.u2PriChnlFreq,
 			rRfChnlInfo.u4CenterFreq1);
 
-		/* fill in chinfo to chandef */
-
-		prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->chan->center_freq
-			= rRfChnlInfo.u2PriChnlFreq;
-		prGlueInfo->prP2PInfo[ucRoleIdx]
-			->chandef->center_freq1 = rRfChnlInfo.u4CenterFreq1;
-		prGlueInfo->prP2PInfo[ucRoleIdx]
-			->chandef->center_freq2 = rRfChnlInfo.u4CenterFreq2;
-
-		if (rRfChnlInfo.ucChnlBw == ((uint8_t)MAX_BW_20MHZ))
-			prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->width
-				= NL80211_CHAN_WIDTH_20;
-		else if (rRfChnlInfo.ucChnlBw == ((uint8_t)MAX_BW_40MHZ))
-			prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->width
-				= NL80211_CHAN_WIDTH_40;
-		else if (rRfChnlInfo.ucChnlBw == ((uint8_t)MAX_BW_80MHZ))
-			prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->width
-				= NL80211_CHAN_WIDTH_80;
-		else
-			prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->width
-				= NL80211_CHAN_WIDTH_20;
-
-		if (rRfChnlInfo.eBand == BAND_5G)
-			prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->
-				chan->band = KAL_BAND_5GHZ;
-		else
-			prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->
-				chan->band = KAL_BAND_2GHZ;
-
-		/* Copy NEW CHINFO to Adapter */
+		/* Copy NEW CHINFO to prP2pRoleFsmInfo->rConnReqInfo */
 		p2pFuncSetChannel(prAdapter,
 			ucRoleIdx, &rRfChnlInfo);
 
@@ -1258,6 +1202,20 @@ uint8_t cnmIdcCsaReq(IN struct ADAPTER *prAdapter,
 		prAdapter->rWifiVar.ucNewChannelNumber =
 			rRfChnlInfo.ucChannelNum;
 		prAdapter->rWifiVar.ucChannelSwitchCount = 5;
+
+#if CFG_SUPPORT_P2P_CSA
+		/* Set SCO IE parameters */
+		prAdapter->rWifiVar.ucChannelSwitchCount =
+			prAdapter->rWifiVar.ucP2pCsaCount;
+		prAdapter->rWifiVar.ucSecondaryOffset =
+			rlmGetScoByChnInfo(prAdapter, &rRfChnlInfo);
+		prAdapter->rWifiVar.ucNewChannelWidth =
+			rlmGetVhtOpBwByBssOpBw(rRfChnlInfo.ucChnlBw);
+		prAdapter->rWifiVar.ucNewChannelS1 =
+			nicFreq2ChannelNum(
+				rRfChnlInfo.u4CenterFreq1 * 1000);
+		prAdapter->rWifiVar.ucNewChannelS2 = 0;
+#endif
 
 		/* Set new channel parameters */
 		prP2pSetNewChannelMsg = (struct MSG_P2P_SET_NEW_CHANNEL *)
@@ -1284,34 +1242,11 @@ uint8_t cnmIdcCsaReq(IN struct ADAPTER *prAdapter,
 			(struct MSG_HDR *) prP2pSetNewChannelMsg,
 			MSG_SEND_METHOD_BUF);
 
-		/* Update beacon */
-		prP2pBcnUpdateMsg = (struct MSG_P2P_BEACON_UPDATE *)
-			cnmMemAlloc(prAdapter,
-			RAM_TYPE_MSG,
-			sizeof(struct MSG_P2P_BEACON_UPDATE));
-
-		if (prP2pBcnUpdateMsg == NULL) {
-			ASSERT(FALSE);
-			return -1;
-		}
-
-		prP2pBcnUpdateMsg->ucRoleIndex = ucRoleIdx;
-		prP2pBcnUpdateMsg->rMsgHdr.eMsgId =
-			MID_MNY_P2P_BEACON_UPDATE;
-
-		prP2pBcnUpdateMsg->u4BcnHdrLen = 0;
-		prP2pBcnUpdateMsg->pucBcnHdr = NULL;
-
-		prP2pBcnUpdateMsg->u4BcnBodyLen = 0;
-		prP2pBcnUpdateMsg->pucBcnBody = NULL;
-
-
 		kalP2PSetRole(prGlueInfo, 2, ucRoleIdx);
 
-		mboxSendMsg(prAdapter,
-			MBOX_ID_0,
-			(struct MSG_HDR *) prP2pBcnUpdateMsg,
-			MSG_SEND_METHOD_BUF);
+
+		/*CSA Update Beacon Use old IE, No Need Parse pucBcnBody */
+		bssUpdateBeaconContent(prAdapter, prBssInfo->ucBssIndex);
 
 		/* Record Last Channel Switch Time */
 		GET_CURRENT_SYSTIME(&g_rLastCsaSysTime);
@@ -1407,6 +1342,96 @@ void cnmIdcDetectHandler(IN struct ADAPTER *prAdapter,
 		}
 	}
 }
+
+#if (CFG_SUPPORT_AUTO_SCC == 1)
+void cnmSCCAutoSwitchMode(IN struct ADAPTER *prAdapter,
+		IN uint8_t ucAISChannel)
+{
+	uint8_t ucBssIndex;
+	struct BSS_INFO *prBssInfo;
+	uint32_t u4Ret = 0;
+
+	if (!prAdapter)
+		return;
+	if (!ucAISChannel)
+		return;
+
+	/* Choose New Ch & Start CSA */
+	for (ucBssIndex = 0; ucBssIndex < BSS_DEFAULT_NUM; ucBssIndex++) {
+		prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+
+		if (prBssInfo &&
+			(prBssInfo->eCurrentOPMode == OP_MODE_ACCESS_POINT)) {
+			/* check bss of GO */
+			struct P2P_ROLE_FSM_INFO *prP2pRoleFsmInfo =
+				(struct P2P_ROLE_FSM_INFO *)NULL;
+			prP2pRoleFsmInfo = p2pFuncGetRoleByBssIdx(prAdapter,
+				ucBssIndex);
+
+			u4Ret = cnmIdcCsaReq(prAdapter,	ucAISChannel,
+				prP2pRoleFsmInfo->ucRoleIndex);
+
+			DBGLOG(CNM, STATE,
+				"P2P [CSA]BssIdx= %d, NewCH= %d\n",
+					ucBssIndex, ucAISChannel);
+
+			if (u4Ret != 0)
+				DBGLOG(CNM, ERROR,
+					"P2P [CSA] channel switch failed\n");
+			break;
+		}
+	}
+}
+
+u_int8_t cnmIsSCCAutoSwitch(IN struct ADAPTER *prAdapter,
+		IN uint8_t ucAISChannel)
+{
+	uint8_t ucBssIndex;
+	enum ENUM_BAND eAISBand;
+	struct BSS_INFO *prBssInfo;
+
+	uint8_t ucActiveChannelSwitch = FALSE;
+
+	if (!prAdapter)
+		return 0;
+	if (!ucAISChannel)
+		return 0;
+
+	eAISBand = (ucAISChannel <= HW_CHNL_NUM_MAX_2G4) ?
+					BAND_2G4 : BAND_5G;
+
+	/* Choose New Ch & Start CSA */
+	for (ucBssIndex = 0; ucBssIndex < BSS_DEFAULT_NUM; ucBssIndex++) {
+		prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+
+		/* check the connected BSS is GO */
+		if (prBssInfo &&
+			(prBssInfo->eCurrentOPMode ==
+			  OP_MODE_ACCESS_POINT) &&
+			  prBssInfo->fgGoStarted == TRUE) {
+			DBGLOG(CNM, STATE,
+				"[CSA]BssIdx= %d, CurCH= %d, AISConnCH= %d\n",
+					ucBssIndex,
+					prBssInfo->ucPrimaryChannel,
+					ucAISChannel);
+
+			/* If it is going to be MCC, trigger channel switch */
+			if (prBssInfo->ucPrimaryChannel != ucAISChannel) {
+				DBGLOG(CNM, STATE,
+					"Diff channel: activate CSA\n");
+				ucActiveChannelSwitch = TRUE;
+			} else {
+				DBGLOG(CNM, STATE,
+					"No CSA needed\n");
+			}
+
+			break;
+		}
+	}
+	return ucActiveChannelSwitch;
+}
+#endif /* CFG_SUPPORT_AUTO_SCC */
+
 #endif
 
 /*----------------------------------------------------------------------------*/
@@ -1876,7 +1901,7 @@ uint8_t cnmGetBssMaxBw(struct ADAPTER *prAdapter,
 	struct P2P_CONNECTION_REQ_INFO *prP2pConnReqInfo =
 		(struct P2P_CONNECTION_REQ_INFO *) NULL;
 #if (CFG_SUPPORT_SINGLE_SKU == 1)
-	uint8_t ucChannelBw = MAX_BW_80_80_MHZ;
+	uint8_t ucChannelBw;
 #endif
 
 	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter,
@@ -2016,6 +2041,10 @@ struct BSS_INFO *cnmGetBssInfoAndInit(struct ADAPTER *prAdapter,
 			prBssInfo->ucBMCWlanIndexS[i] = WTBL_RESERVED_ENTRY;
 			prBssInfo->wepkeyUsed[i] = FALSE;
 		}
+
+#if CFG_SUPPORT_DUAL_WTBL_GTK_REKEY_OFFLOAD
+		prBssInfo->u4DualGTKKeyIndex = 0xFF;
+#endif
 		return prBssInfo;
 	}
 
@@ -2109,7 +2138,16 @@ struct BSS_INFO *cnmGetBssInfoAndInit(struct ADAPTER *prAdapter,
 			prBssInfo->ucBMCWlanIndexS[i] = WTBL_RESERVED_ENTRY;
 			prBssInfo->wepkeyUsed[i] = FALSE;
 		}
+
+#if CFG_SUPPORT_DUAL_WTBL_GTK_REKEY_OFFLOAD
+		prBssInfo->u4DualGTKKeyIndex = 0xFF;
+#endif
 	}
+
+#if (CFG_SUPPORT_AUTO_SCC == 1)
+	prBssInfo->fgGoStarted = FALSE;
+#endif
+
 	return prBssInfo;
 }
 
@@ -2166,7 +2204,8 @@ void cnmInitDbdcSetting(IN struct ADAPTER *prAdapter)
 		cnmTimerInitTimer(prAdapter,
 			&g_rDbdcInfo.rDbdcGuardTimer,
 			(PFN_MGMT_TIMEOUT_FUNC)cnmDbdcGuardTimerCallback,
-			(unsigned long) NULL);
+			(unsigned long) NULL,
+			TIMER_WAKELOCK_AUTO);
 
 		g_rDbdcInfo.eDdbcGuardTimerType =
 			ENUM_DBDC_GUARD_TIMER_NONE;
@@ -3667,3 +3706,47 @@ void cnmSetMccTime(
 						0);
 }
 #endif /*CFG_SUPPORT_RX_DYNAMIC_MCC_PRIORITY*/
+
+struct BSS_INFO *cnmGetP2pBssInfo(struct ADAPTER *prAdapter)
+{
+	struct BSS_INFO *prBssInfo;
+	uint8_t ucBssIndex;
+
+	if (!prAdapter)
+		return NULL;
+
+	for (ucBssIndex = 0; ucBssIndex < BSS_DEFAULT_NUM;
+		 ucBssIndex++) {
+		prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter,
+				  ucBssIndex);
+		if (prBssInfo &&
+		    IS_BSS_P2P(prBssInfo) &&
+		    !p2pFuncIsAPMode(
+		    prAdapter->rWifiVar.prP2PConnSettings
+		    [prBssInfo->u4PrivateData]) &&
+		    DBDC_IS_BSS_ALIVE(prBssInfo))
+			return prBssInfo;
+	}
+	return NULL;
+}
+
+struct BSS_INFO *cnmGetSapBssInfo(IN struct ADAPTER *prAdapter)
+{
+	struct BSS_INFO *prBssInfo;
+	uint8_t ucBssIndex;
+
+	if (!prAdapter)
+		return NULL;
+
+	for (ucBssIndex = 0; ucBssIndex < BSS_DEFAULT_NUM;
+	     ucBssIndex++) {
+		prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter,
+						  ucBssIndex);
+		if (prBssInfo &&
+			(prBssInfo->eCurrentOPMode == OP_MODE_ACCESS_POINT)) {
+			return prBssInfo;
+		}
+	}
+
+	return NULL;
+}

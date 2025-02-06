@@ -1,54 +1,8 @@
-/*******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- ******************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/common
  *      /wlan_oid.c#11
@@ -73,7 +27,7 @@
 #include "mgmt/rsn.h"
 #include "gl_wext.h"
 #include "debug.h"
-#include <stddef.h>
+#include <linux/stddef.h>
 
 /******************************************************************************
  *                              C O N S T A N T S
@@ -7424,8 +7378,14 @@ wlanoidSetSwCtrlWrite(IN struct ADAPTER *prAdapter,
 	DEBUGFUNC("wlanoidSetSwCtrlWrite");
 	DBGLOG(INIT, LOUD, "\n");
 
-	ASSERT(prAdapter);
-	ASSERT(pu4SetInfoLen);
+	if (!prAdapter) {
+		DBGLOG(INIT, ERROR, "prAdapter is NULL error\n");
+		return WLAN_STATUS_FAILURE;
+	}
+	if (!pu4SetInfoLen) {
+		DBGLOG(INIT, ERROR, "pu4SetInfoLen is NULL error\n");
+		return WLAN_STATUS_FAILURE;
+	}
 
 	*pu4SetInfoLen = sizeof(struct PARAM_CUSTOM_SW_CTRL_STRUCT);
 
@@ -7433,7 +7393,10 @@ wlanoidSetSwCtrlWrite(IN struct ADAPTER *prAdapter,
 				    PARAM_CUSTOM_SW_CTRL_STRUCT))
 		return WLAN_STATUS_INVALID_LENGTH;
 
-	ASSERT(pvSetBuffer);
+	if (!pvSetBuffer) {
+		DBGLOG(INIT, ERROR, "pvSetBuffer is NULL error\n");
+		return WLAN_STATUS_FAILURE;
+	}
 
 	prSwCtrlInfo = (struct PARAM_CUSTOM_SW_CTRL_STRUCT *)
 		       pvSetBuffer;
@@ -7458,6 +7421,12 @@ wlanoidSetSwCtrlWrite(IN struct ADAPTER *prAdapter,
 		ucNss = (uint8_t)(u4Data & BITS(0, 3));
 		ucChannelWidth = (uint8_t)((u4Data & BITS(4, 7)) >> 4);
 		ucBssIndex = (uint8_t) u2SubId;
+
+		if (!IS_BSS_INDEX_VALID(ucBssIndex)) {
+			DBGLOG(RLM, ERROR,
+				"Invalid bssidx:%d\n", ucBssIndex);
+			break;
+		}
 
 		if ((u2SubId & BITS(8, 15)) != 0) { /* Debug OP change
 						     * parameters
@@ -8008,7 +7977,7 @@ wlanoidSetKeyCfg(IN struct ADAPTER *prAdapter,
 
 	wlanInitFeatureOption(prAdapter);
 #if CFG_SUPPORT_EASY_DEBUG
-	wlanFeatureToFw(prAdapter);
+	wlanFeatureToFw(prAdapter, NULL, false);
 #endif
 
 	return rWlanStatus;
@@ -9272,6 +9241,10 @@ wlanoidSetDisassociate(IN struct ADAPTER *prAdapter,
 	struct MSG_AIS_ABORT *prAisAbortMsg;
 #if CFG_SUPPORT_CFG80211_AUTH
 	struct net_device *ndev = NULL;
+#if (CFG_ADVANCED_80211_MLO == 1) || \
+	KERNEL_VERSION(6, 0, 0) <= CFG80211_VERSION_CODE
+	struct cfg80211_assoc_failure assoc_failure_data = {0};
+#endif
 #endif
 
 	DEBUGFUNC("wlanoidSetDisassociate");
@@ -9288,8 +9261,17 @@ wlanoidSetDisassociate(IN struct ADAPTER *prAdapter,
 		if (prAdapter->rWifiVar.rConnSettings.bss && ndev) {
 			DBGLOG(REQ, INFO, "assoc timeout notify\n");
 			/* ops caller have already hold the mutex. */
+#if (CFG_ADVANCED_80211_MLO == 1) || \
+	KERNEL_VERSION(6, 0, 0) <= CFG80211_VERSION_CODE
+			assoc_failure_data.ap_mld_addr = NULL;
+			assoc_failure_data.bss[0] =
+				prAdapter->rWifiVar.rConnSettings.bss;
+			assoc_failure_data.timeout = true;
+			cfg80211_assoc_failure(ndev, &assoc_failure_data);
+#else
 			cfg80211_assoc_timeout(ndev,
 				prAdapter->rWifiVar.rConnSettings.bss);
+#endif
 			DBGLOG(REQ, INFO, "assoc timeout notify, Done\n");
 			prAdapter->rWifiVar.rConnSettings.bss = NULL;
 		}
@@ -14345,8 +14327,8 @@ wlanoidPacketKeepAlive(IN struct ADAPTER *prAdapter,
 	kalMemCopy(prPacket, pvSetBuffer,
 		   sizeof(struct PARAM_PACKET_KEEPALIVE_T));
 
-	DBGLOG(OID, INFO, "enable=%d, index=%d\r\n",
-	       prPacket->enable, prPacket->index);
+	DBGLOG(OID, INFO, "fgEnable=%d, index=%d\r\n",
+	       prPacket->fgEnable, prPacket->index);
 
 	rStatus = wlanSendSetQueryCmd(prAdapter,
 				      CMD_ID_WFC_KEEP_ALIVE,
@@ -14650,7 +14632,7 @@ wlanoidGetTxPwrTbl(IN struct ADAPTER *prAdapter,
 		   IN uint32_t u4QueryBufferLen,
 		   OUT uint32_t *pu4QueryInfoLen)
 {
-	struct CMD_GET_TXPWR_TBL CmdPwrTbl;
+	struct CMD_GET_TXPWR_TBL CmdPwrTbl = {0};
 	struct PARAM_CMD_GET_TXPWR_TBL *prPwrTbl = NULL;
 
 	DEBUGFUNC("wlanoidGetTxPwrTbl");
@@ -14692,6 +14674,50 @@ wlanoidGetTxPwrTbl(IN struct ADAPTER *prAdapter,
 				   u4QueryBufferLen);
 
 }
+
+/*----------------------------------------------------------------------------*/
+/*!
+ * \brief This routine is used to do AIS pre-Suspend flow.
+ *
+ * \param[in] pvAdapter Pointer to the Adapter structure.
+ * \param[in] pvSetBuffer A pointer to the buffer that holds the data to be set.
+ * \param[in] u4SetBufferLen The length of the set buffer.
+ * \param[out] pu4SetInfoLen If the call is successful, returns the number of
+ *                          bytes read from the set buffer. If the call failed
+ *                          due to invalid length of the set buffer, returns
+ *                          the amount of storage needed.
+ *
+ * \retval WLAN_STATUS_SUCCESS
+ * \retval WLAN_STATUS_ADAPTER_NOT_READY
+ */
+/*----------------------------------------------------------------------------*/
+uint32_t
+wlanoidAisPreSuspend(IN struct ADAPTER *prAdapter,
+		IN void *pvSetBuffer, IN uint32_t u4SetBufferLen,
+		OUT uint32_t *pu4SetInfoLen)
+{
+
+	struct WIFI_VAR *prWifiVar = NULL;
+
+	if (prAdapter == NULL || pu4SetInfoLen == NULL)
+		return WLAN_STATUS_ADAPTER_NOT_READY;
+
+	*pu4SetInfoLen = 0;
+	prWifiVar = &prAdapter->rWifiVar;
+
+	/* AIS flow: disassociation if wow_en=0 */
+	/* cancel scan report done event */
+	aisPreSuspendFlow(prAdapter->prGlueInfo);
+
+	/* In current design, only support AIS connection during suspend only.
+	 * It need to add flow deactivate P2P(GC/GO) link during suspend flow.
+	 * Otherwise, MT7668 would fail to enter deep sleep.
+	 */
+
+	p2pProcessPreSuspendFlow(prAdapter);
+
+	return WLAN_STATUS_SUCCESS;
+} /* wlanoidPreSuspend */
 
 #if CFG_SUPPORT_NCHO
 #define FW_CFG_KEY_NCHO_ENABLE			"NCHOEnable"
@@ -16165,42 +16191,66 @@ uint32_t wlanoidUpdateFtIes(struct ADAPTER *prAdapter, void *pvSetBuffer,
 	IE_FOR_EACH(pucIEStart, u4IeLen, u2Offset) {
 		switch (IE_ID(pucIEStart)) {
 		case ELEM_ID_MOBILITY_DOMAIN:
-			if (prFtIes->prMDIE == NULL)
+			if (prFtIes->prMDIE == NULL) {
 				prFtIes->prMDIE = kalMemAlloc(
 					IE_SIZE(pucIEStart), VIR_MEM_TYPE);
+				if (prFtIes->prMDIE == NULL) {
+					DBGLOG(OID, ERROR,
+						"FT: prMDIE alloc failed!");
+					return WLAN_STATUS_INVALID_DATA;
+				}
+			}
 			COPY_IE((unsigned long)(prFtIes->prMDIE), pucIEStart);
 			prFtIes->u4IeLength += IE_SIZE(pucIEStart);
 			break;
 		case ELEM_ID_FAST_TRANSITION:
-			if (prFtIes->prFTIE == NULL)
+			if (prFtIes->prFTIE == NULL) {
 				prFtIes->prFTIE = kalMemAlloc(IE_SIZE(
 					pucIEStart), VIR_MEM_TYPE);
+				if (prFtIes->prFTIE == NULL) {
+					DBGLOG(OID, ERROR,
+						"FT: prFTIE alloc failed!");
+					return WLAN_STATUS_INVALID_DATA;
+				}
+			}
 			COPY_IE((unsigned long)(prFtIes->prFTIE), pucIEStart);
 			prFtIes->u4IeLength += IE_SIZE(pucIEStart);
 			break;
 		case ELEM_ID_RESOURCE_INFO_CONTAINER:
 			break;
 		case ELEM_ID_TIMEOUT_INTERVAL:
-			if (prFtIes->prTIE == NULL)
+			if (prFtIes->prTIE == NULL) {
 				prFtIes->prTIE = kalMemAlloc(
 					IE_SIZE(pucIEStart), VIR_MEM_TYPE);
+				if (prFtIes->prTIE == NULL) {
+					DBGLOG(OID, ERROR,
+						"FT: prTIE alloc failed!");
+					return WLAN_STATUS_INVALID_DATA;
+				}
+			}
 			COPY_IE((unsigned long)(prFtIes->prTIE), pucIEStart);
 			prFtIes->u4IeLength += IE_SIZE(pucIEStart);
 			break;
 		case ELEM_ID_RSN:
-			if (prFtIes->prRsnIE == NULL)
+			if (prFtIes->prRsnIE == NULL) {
 				prFtIes->prRsnIE = kalMemAlloc(
 					IE_SIZE(pucIEStart), VIR_MEM_TYPE);
+				if (prFtIes->prRsnIE == NULL) {
+					DBGLOG(OID, ERROR,
+						"FT: prRsnIE alloc failed!");
+					return WLAN_STATUS_INVALID_DATA;
+				}
+			}
 			COPY_IE((unsigned long)(prFtIes->prRsnIE), pucIEStart);
 			prFtIes->u4IeLength += IE_SIZE(pucIEStart);
 			break;
 		}
 	}
 	DBGLOG(OID, INFO,
-	       "FT: IesLen %u, MDIE %d FTIE %d RSN %d TIE %d\n",
-			prFtIes->u4IeLength, !!prFtIes->prMDIE,
-			!!prFtIes->prFTIE, !!prFtIes->prRsnIE,
-			!!prFtIes->prTIE);
+		"FT: IesLen %u, MDIE %d FTIE %d RSN %d TIE %d\n",
+		prFtIes->u4IeLength, !!prFtIes->prMDIE,
+		!!prFtIes->prFTIE, !!prFtIes->prRsnIE,
+		!!prFtIes->prTIE);
 
 #else
 	if (u4IeLen)
@@ -17574,13 +17624,22 @@ wlanoidSetMdnsCmdToFw(
 
 	DEBUGFUNC("wlanoidSetMdnsCmdToFw");
 
-	ASSERT(prAdapter);
-	ASSERT(pu4SetInfoLen);
+	if (!prAdapter) {
+		DBGLOG(NIC, ERROR, "NULL prAdapter!\n");
+		return WLAN_STATUS_ADAPTER_NOT_READY;
+	}
+
+	if (!pu4SetInfoLen) {
+		DBGLOG(NIC, ERROR, "NULL pu4SetInfoLen!\n");
+		return WLAN_STATUS_INVALID_LENGTH;
+	}
+
+	if (!pvSetBuffer) {
+		DBGLOG(NIC, ERROR, "NULL pvSetBuffer!\n");
+		return WLAN_STATUS_INVALID_DATA;
+	}
 
 	*pu4SetInfoLen = sizeof(struct CMD_MDNS_PARAM_T);
-
-	if (u4SetBufferLen)
-		ASSERT(pvSetBuffer);
 
 	cmdMdnsParam = (struct CMD_MDNS_PARAM_T *)
 			   pvSetBuffer;
@@ -17598,6 +17657,54 @@ wlanoidSetMdnsCmdToFw(
 			(uint8_t *)cmdMdnsParam,
 			NULL,
 			0);
+}
+
+uint32_t wlanoidGetMdnsHitMiss(IN struct ADAPTER *prAdapter,
+	IN void *pvSetBuffer,
+	IN uint32_t u4SetBufferLen,
+	OUT uint32_t *pu4SetInfoLen)
+{
+
+	struct CMD_MDNS_PARAM_T *cmdMdnsParam;
+	struct EVENT_ID_MDNS_RECORD_T *prMdnsRecordEvent;
+	uint32_t u4QueryBufLen = sizeof(struct EVENT_ID_MDNS_RECORD_T);
+	uint32_t u4QueryInfoLen = sizeof(struct CMD_MDNS_PARAM_T);
+
+	DEBUGFUNC("wlanoidGetMdnsHitMiss");
+
+	if (!prAdapter) {
+		DBGLOG(NIC, ERROR, "NULL prAdapter!\n");
+		return WLAN_STATUS_ADAPTER_NOT_READY;
+	}
+
+	if (!pu4SetInfoLen) {
+		DBGLOG(NIC, ERROR, "NULL pu4SetInfoLen!\n");
+		return WLAN_STATUS_INVALID_LENGTH;
+	}
+
+	if (!pvSetBuffer) {
+		DBGLOG(NIC, ERROR, "NULL pvSetBuffer!\n");
+		return WLAN_STATUS_INVALID_DATA;
+	}
+
+	prMdnsRecordEvent = &prAdapter->rMdnsInfo.rMdnsRecordEvent;
+	*pu4SetInfoLen = sizeof(struct CMD_MDNS_PARAM_T);
+
+	cmdMdnsParam = (struct CMD_MDNS_PARAM_T *)pvSetBuffer;
+
+	DBGLOG(SW4, STATE, "set cmd %u.\n", cmdMdnsParam->ucCmd);
+
+	return wlanSendSetQueryCmd(prAdapter,	/* prAdapter */
+			    CMD_ID_SET_MDNS_RECORD,	/* ucCID */
+			    TRUE,	/* fgSetQuery */
+			    TRUE,	/* fgNeedResp */
+			    TRUE,	/* fgIsOid */
+			    nicCmdEventQueryMdnsStats,    /* pfCmdDoneHandler */
+			    nicOidCmdTimeoutCommon, /* pfCmdTimeoutHandler */
+			    u4QueryInfoLen,    /* u4SetQueryInfoLen */
+			    (uint8_t *)cmdMdnsParam,  /* pucInfoBuffer */
+			    (void *)prMdnsRecordEvent, /* pvSetQueryBuffer */
+			    u4QueryBufLen);   /* u4SetQueryBufferLen */
 }
 #endif
 
@@ -17841,3 +17948,111 @@ uint32_t wlanoidSendBTMRequest(struct ADAPTER *prAdapter,
 }
 #endif /* CFG_AP_80211V_SUPPORT */
 
+#if (CFG_SUPPORT_TSF_SYNC == 1)
+uint32_t
+wlanoidLatchTSF(IN struct ADAPTER *prAdapter,
+		    IN void *pvQueryBuffer, IN uint32_t u4QueryBufferLen,
+		    OUT uint32_t *pu4QueryInfoLen) {
+	struct CMD_TSF_SYNC *prCmdTSF;
+
+	DEBUGFUNC("wlanoidLatchTSF");
+
+	if (!prAdapter) {
+		DBGLOG(REQ, WARN, "NULL prAdapter!\n");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	if (!pvQueryBuffer) {
+		DBGLOG(REQ, WARN, "NULL pvQueryBuffer!\n");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	if (!pu4QueryInfoLen) {
+		DBGLOG(REQ, WARN, "NULL pu4QueryInfoLen!\n");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	prCmdTSF = (struct CMD_TSF_SYNC *)pvQueryBuffer;
+
+	return wlanSendSetQueryCmd(prAdapter,
+				   CMD_ID_BEACON_TSF_SYNC,
+				   FALSE,
+				   TRUE,
+				   TRUE,
+				   nicCmdEventLatchTSF,
+				   nicOidCmdTimeoutCommon,
+				   sizeof(struct CMD_TSF_SYNC),
+				   (uint8_t *) pvQueryBuffer,
+				   pvQueryBuffer,
+				   u4QueryBufferLen);
+
+}				/* end of wlanoidLatchTSF() */
+#endif
+
+#if (CFG_SUPPORT_PKT_OFLD == 1)
+
+uint32_t
+wlanoidSetOffloadInfo(IN struct ADAPTER *prAdapter,
+			   IN void *pvSetBuffer, IN uint32_t u4SetBufferLen,
+			   OUT uint32_t *pu4SetInfoLen)
+{
+	ASSERT(prAdapter);
+	ASSERT(pu4SetInfoLen);
+
+	return wlanSendSetQueryCmd(prAdapter,
+				   CMD_ID_PKT_OFLD,
+				   TRUE,
+				   FALSE,
+				   TRUE,
+				   nicCmdEventSetCommon,
+				   nicOidCmdTimeoutCommon,
+				   sizeof(struct CMD_OFLD_INFO),
+				   (uint8_t *) pvSetBuffer,
+				   pvSetBuffer, u4SetBufferLen);
+
+}	/* wlanoidSetOffloadInfo */
+
+uint32_t
+wlanoidQueryOffloadInfo(IN struct ADAPTER *prAdapter,
+			   IN void *pvSetBuffer, IN uint32_t u4SetBufferLen,
+			   OUT uint32_t *pu4SetInfoLen)
+{
+	ASSERT(prAdapter);
+	ASSERT(pu4SetInfoLen);
+
+	return wlanSendSetQueryCmd(prAdapter,
+				   CMD_ID_PKT_OFLD,
+				   FALSE,
+				   TRUE,
+				   TRUE,
+				   nicCmdEventQueryOfldInfo,
+				   nicOidCmdTimeoutCommon,
+				   sizeof(struct CMD_OFLD_INFO),
+				   (uint8_t *) pvSetBuffer,
+				   pvSetBuffer, u4SetBufferLen);
+
+}	/* wlanoidQueryOffloadInfo */
+
+#endif /* CFG_SUPPORT_PKT_OFLD */
+
+uint8_t wlanGetBssIdx(struct net_device *ndev)
+{
+	if (ndev) {
+		struct NETDEV_PRIVATE_GLUE_INFO *prNetDevPrivate
+			= (struct NETDEV_PRIVATE_GLUE_INFO *)
+			netdev_priv(ndev);
+
+		DBGLOG(REQ, LOUD,
+			"ucBssIndex = %d, ndev(%p)\n",
+			prNetDevPrivate->ucBssIdx,
+			ndev);
+
+		return prNetDevPrivate->ucBssIdx;
+	}
+
+	DBGLOG(REQ, LOUD,
+		"ucBssIndex = 0xff, ndev(%p)\n",
+		ndev);
+
+	return 0xff;
+}

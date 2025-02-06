@@ -1,54 +1,8 @@
-/*******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- ******************************************************************************/
+/* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/include
  *      /wlan_oid.h#4
@@ -117,10 +71,14 @@
 #define PARAM_PACKET_FILTER_PROMISCUOUS         0x00000020
 #define PARAM_PACKET_FILTER_ALL_LOCAL           0x00000080
 #if CFG_ENABLE_WIFI_DIRECT_CFG_80211
-#define PARAM_PACKET_FILTER_P2P_MASK		0xC0000000
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+#define PARAM_PACKET_FILTER_P2P_MASK             0xF0000000
+#else
+#define PARAM_PACKET_FILTER_P2P_MASK             0xC0000000
+#endif
 #define PARAM_PACKET_FILTER_PROBE_REQ		0x80000000
 #define PARAM_PACKET_FILTER_ACTION_FRAME	0x40000000
-#define PARAM_PACKET_FILTER_AUTH		0x20000000
+#define PARAM_PACKET_FILTER_AUTH			0x20000000
 #define PARAM_PACKET_FILTER_ASSOC_REQ		0x10000000
 
 #endif
@@ -283,6 +241,8 @@
 #define GED_EVENT_NETWORK           (1 << 11)
 #define GED_EVENT_DOPT_WIFI_SCAN    (1 << 12)
 #endif /* CFG_SUPPORT_LOWLATENCY_MODE */
+
+#define CAL_ARRAY_SIZE		2048
 
 /*******************************************************************************
  *                             D A T A   T Y P E S
@@ -2869,6 +2829,20 @@ struct PARAM_CUSTOM_BTM_REQ_STRUCT {
 };
 #endif /* CFG_AP_80211V_SUPPORT */
 
+#if (CFG_SUPPORT_PKT_OFLD == 1)
+struct PARAM_OFLD_INFO {
+	/*restrict buffer size to 1500 bytes*/
+	/*because FW WFDMA MAX buf size is 1600 Byte*/
+	uint8_t ucType;
+	uint8_t ucOp;
+	uint8_t ucFragNum;
+	uint8_t ucFragSeq;
+	uint32_t u4TotalLen;
+	uint32_t u4BufLen;
+	uint8_t aucBuf[PKT_OFLD_BUF_SIZE];
+};
+#endif /* CFG_SUPPORT_PKT_OFLD */
+
 /*******************************************************************************
  *                            P U B L I C   D A T A
  *******************************************************************************
@@ -4058,9 +4032,17 @@ wlanGetChannelIndex(IN uint8_t channel);
 uint8_t
 wlanGetChannelNumFromIndex(IN uint8_t ucIdx);
 
-void
-wlanSortChannel(IN struct ADAPTER *prAdapter);
+enum ENUM_BAND
+wlanGetChannelBandFromIndex(IN uint8_t ucIdx);
 
+void
+wlanSortChannel(IN struct ADAPTER *prAdapter,
+		IN enum ENUM_CHNL_SORT_POLICY ucSortType);
+
+#if (CFG_SUPPORT_P2PGO_ACS == 1)
+void wlanGetChannelListUnsortedPerBand(
+	IN struct ADAPTER *prAdapter);
+#endif
 #endif
 
 uint32_t
@@ -4084,6 +4066,10 @@ wlanoidGetTxPwrTbl(IN struct ADAPTER *prAdapter,
 		   IN uint32_t u4QueryBufferLen,
 		   OUT uint32_t *pu4QueryInfoLen);
 
+uint32_t
+wlanoidAisPreSuspend(IN struct ADAPTER *prAdapter,
+		IN void *pvSetBuffer, IN uint32_t u4SetBufferLen,
+		OUT uint32_t *pu4SetInfoLen);
 
 uint32_t
 wlanoidDisableTdlsPs(IN struct ADAPTER *prAdapter,
@@ -4422,6 +4408,18 @@ wlanoidQueryCoexGetInfo(IN struct ADAPTER *prAdapter,
 			IN uint32_t u4QueryBufferLen,
 			OUT uint32_t *pu4QueryInfoLen);
 
+#if CFG_SUPPORT_MDNS_OFFLOAD
+uint32_t wlanoidSetMdnsCmdToFw(IN struct ADAPTER *prAdapter,
+			     IN void *pvSetBuffer,
+			     IN uint32_t u4SetBufferLen,
+			     OUT uint32_t *pu4SetInfoLen);
+
+uint32_t wlanoidGetMdnsHitMiss(IN struct ADAPTER *prAdapter,
+			     IN void *pvSetBuffer,
+			     IN uint32_t u4SetBufferLen,
+			     OUT uint32_t *pu4SetInfoLen);
+#endif
+
 uint32_t
 wlanoidQueryCoexIso(IN struct ADAPTER *prAdapter,
 		    IN void *pvQueryBuffer,
@@ -4480,6 +4478,28 @@ uint32_t wlanoidSendBTMRequest(struct ADAPTER *prAdapter,
 				    void *pvSetBuffer, uint32_t u4SetBufferLen,
 				    uint32_t *pu4SetInfoLen);
 #endif /* CFG_AP_80211V_SUPPORT */
+
+#if (CFG_SUPPORT_TSF_SYNC == 1)
+uint32_t
+wlanoidLatchTSF(IN struct ADAPTER *prAdapter,
+		    IN void *pvQueryBuffer, IN uint32_t u4QueryBufferLen,
+		    OUT uint32_t *pu4QueryInfoLen);
+#endif
+
+#if (CFG_SUPPORT_PKT_OFLD == 1)
+uint32_t
+wlanoidSetOffloadInfo(IN struct ADAPTER *prAdapter,
+			   IN void *pvSetBuffer, IN uint32_t u4SetBufferLen,
+			   OUT uint32_t *pu4SetInfoLen);
+
+uint32_t
+wlanoidQueryOffloadInfo(IN struct ADAPTER *prAdapter,
+			   IN void *pvSetBuffer, IN uint32_t u4SetBufferLen,
+			   OUT uint32_t *pu4SetInfoLen);
+
+#endif /* CFG_SUPPORT_PKT_OFLD */
+
+uint8_t wlanGetBssIdx(struct net_device *ndev);
 
 #endif /* _WLAN_OID_H */
 

@@ -540,6 +540,12 @@ void qmUpdateStaRec(struct ADAPTER *prAdapter,
 		else
 			fgIsTxAllowed = TRUE;
 	}
+
+	if (fgIsTxAllowed)
+		prStaRec->fgtxAllowReason = TXALLOWED_MODE;
+	else
+		prStaRec->fgtxAllowReason = PROTECT_MODE_MISMATCH;
+
 	/* 4 <x> Update StaRec */
 	qmSetStaRecTxAllowed(prAdapter, prStaRec, fgIsTxAllowed);
 
@@ -4164,6 +4170,12 @@ u_int8_t qmAmsduAttackDetection(struct ADAPTER *prAdapter,
 	/* 802.11 header RA */
 	ucBssIndex = prSwRfb->prStaRec->ucBssIndex;
 	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+	if (!prBssInfo) {
+		DBGLOG(QM, ERROR, "prBssInfo NULL for BssIndex:%u\n",
+				ucBssIndex);
+		return FALSE;
+	}
+
 	pucRaAddr = &prBssInfo->aucOwnMacAddr[0];
 
 	/* DA and SA */
@@ -4172,6 +4184,10 @@ u_int8_t qmAmsduAttackDetection(struct ADAPTER *prAdapter,
 
 	if (RXM_IS_QOS_DATA_FRAME(u2FrameCtrl)) {
 		ucTid = prSwRfb->ucTid;
+		if (ucTid >= TID_NUM) {
+			DBGLOG(QM, ERROR, "Invalid Tid:%u\n", ucTid);
+			return FALSE;
+		}
 	} else {
 		/* for non-qos data, use TID_NUM as tid */
 		ucTid = TID_NUM;
@@ -6467,6 +6483,10 @@ u_int8_t mqmUpdateEdcaParameters(struct BSS_INFO	*prBssInfo,
 	struct IE_WMM_PARAM *prIeWmmParam;
 	enum ENUM_WMM_ACI eAci;
 	u_int8_t fgNewParameter = FALSE;
+	uint8_t arBuf[256];
+	uint8_t *pos = arBuf;
+	uint8_t *end = arBuf + sizeof(arBuf);
+
 
 	do {
 		if (IE_LEN(pucIE) != 24)
@@ -6492,13 +6512,17 @@ u_int8_t mqmUpdateEdcaParameters(struct BSS_INFO	*prBssInfo,
 		for (eAci = 0; eAci < WMM_AC_INDEX_NUM; eAci++) {
 			prAcQueParams = &prBssInfo->arACQueParms[eAci];
 			mqmFillAcQueParam(prIeWmmParam, eAci, prAcQueParams);
-			log_dbg(QM, INFO, "BSS[%u]: eAci[%d] ACM[%d] Aifsn[%d] CWmin/max[%d/%d] TxopLimit[%d] NewParameter[%d]\n",
-				prBssInfo->ucBssIndex, eAci,
-				prAcQueParams->ucIsACMSet,
+			pos += kalSnprintf(pos, end - pos,
+				"[%d/%d/%d/%d/%d/%d] ",
+				eAci, prAcQueParams->ucIsACMSet,
 				prAcQueParams->u2Aifsn, prAcQueParams->u2CWmin,
 				prAcQueParams->u2CWmax,
-				prAcQueParams->u2TxopLimit, fgNewParameter);
+				prAcQueParams->u2TxopLimit);
 		}
+		DBGLOG(QM, INFO,
+		       "BSS[%u] [AC/ACM/Aifsn/CWmin/CWmax/TxopLimit] %sForceOverride[%d] NewParameter[%d] Cnt[%d]\n",
+		       prBssInfo->ucBssIndex, arBuf, fgForceOverride,
+		       fgNewParameter, prBssInfo->ucWmmParamSetCount);
 	} while (FALSE);
 
 	return fgNewParameter;
@@ -6560,6 +6584,9 @@ uint8_t mqmUpdateMUEdcaParams(struct BSS_INFO *prBssInfo,
 	struct _MU_AC_PARAM_RECORD_T *prMUAcParamInIE;
 	enum ENUM_WMM_ACI eAci;
 	uint8_t fgNewParameter = FALSE;
+	uint8_t arBuf[256];
+	uint8_t *pos = arBuf;
+	uint8_t *end = arBuf + sizeof(arBuf);
 
 	do {
 		if (IE_LEN(pucIE) != 14)
@@ -6600,16 +6627,19 @@ uint8_t mqmUpdateMUEdcaParams(struct BSS_INFO *prBssInfo,
 			prBSSMUEdca->ucMUEdcaTimer =
 				prMUAcParamInIE->ucMUEdcaTimer;
 
-			DBGLOG(QM, INFO,
-				"BSS[%u]: eAci[%d] ACM[%d] Aifsn[%d],",
-				prBssInfo->ucBssIndex, eAci,
-				prBSSMUEdca->ucIsACMSet, prBSSMUEdca->ucAifsn);
-			DBGLOG(QM, INFO,
-				"ECWmin/max[%d/%d] NewParameter[%d]\n",
-				prBSSMUEdca->ucECWmin, prBSSMUEdca->ucECWmax,
-				fgNewParameter);
+			pos += kalSnprintf(pos, end - pos,
+				"[%d/%d/%d/%d/%d/%d] ",
+				eAci, prBSSMUEdca->ucIsACMSet,
+				prBSSMUEdca->ucAifsn, prBSSMUEdca->ucECWmin,
+				prBSSMUEdca->ucECWmax,
+				prBSSMUEdca->ucMUEdcaTimer);
+
 
 		}
+		DBGLOG(QM, INFO,
+		       "BSS[%u] [AC/ACM/Aifsn/ECWmin/ECWmax/Timer] %sForceOverride[%d] NewParameter[%d] Cnt[%d]\n",
+		       prBssInfo->ucBssIndex, arBuf, fgForceOverride,
+		       fgNewParameter, prBssInfo->ucMUEdcaUpdateCnt);
 	} while (FALSE);
 
 	return fgNewParameter;
@@ -7590,6 +7620,13 @@ void qmHandleEventBssAbsencePresence(struct ADAPTER *prAdapter,
 
 	prEventBssStatus = (struct EVENT_BSS_ABSENCE_PRESENCE *) (
 		prEvent->aucBuffer);
+
+	if (!IS_BSS_INDEX_VALID(prEventBssStatus->ucBssIndex)) {
+		DBGLOG(QM, WARN, "NAF:BSS IDX is invalid: %u\n",
+			prEventBssStatus->ucBssIndex);
+		return;
+	}
+
 	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter,
 		prEventBssStatus->ucBssIndex);
 	if (!prBssInfo) {
@@ -9944,16 +9981,16 @@ u_int8_t qmHandleRxReplay(struct ADAPTER *prAdapter,
 	DBGLOG_LIMITED(QM, TRACE, "ucSecMode = [%u], ChiperGroup = [%u]\n",
 			ucSecMode, prWpaInfo->u4CipherGroup);
 
-	if (!(prWpaInfo->u4CipherGroup &
-		(IW_AUTH_CIPHER_TKIP | IW_AUTH_CIPHER_CCMP))) {
+	if (ucSecMode != CIPHER_SUITE_CCMP
+		&& ucSecMode != CIPHER_SUITE_TKIP) {
 		DBGLOG_LIMITED(QM, TRACE,
 			"SecMode: %d and CipherGroup: %d, no need check replay\n",
 			ucSecMode, prWpaInfo->u4CipherGroup);
 		return FALSE;
 	}
 
-	if (prWpaInfo->u4CipherGroup != IW_AUTH_CIPHER_TKIP &&
-		prWpaInfo->u4CipherGroup != IW_AUTH_CIPHER_CCMP) {
+	if (!(prWpaInfo->u4CipherGroup &
+		(IW_AUTH_CIPHER_TKIP | IW_AUTH_CIPHER_CCMP))) {
 		DBGLOG(QM, ERROR,
 			"RX status Chipher mode doens't match AP's setting\n");
 		return FALSE;

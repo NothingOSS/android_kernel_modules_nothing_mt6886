@@ -695,8 +695,8 @@ int mtk_cfg80211_get_station(struct wiphy *wiphy,
 	DBGLOG(REQ, TRACE, "kalIoctlByBssIdx()=%u, prGlueInfo=%p",
 		rStatus, prGlueInfo);
 #else
-	DBGLOG(REQ, TRACE, "Call Glue=%p, LinkSpeed=%p, size=%zu, &u4BufLen=%p",
-		prGlueInfo, &rLinkSpeed, sizeof(rLinkSpeed), &u4BufLen);
+	DBGLOG(REQ, TRACE, "Call LinkSpeed=%p, size=%zu, &u4BufLen=%p",
+		&rLinkSpeed, sizeof(rLinkSpeed), &u4BufLen);
 	rStatus = kalIoctlByBssIdx(prGlueInfo,
 				   wlanoidQueryLinkSpeed, &rLinkSpeed,
 				   sizeof(rLinkSpeed),
@@ -1356,32 +1356,20 @@ int wlanParseAkmSuites(uint32_t *au4AkmSuites, uint32_t u4AkmSuitesCount,
 			default:
 				break;
 			}
-		} else if (u4WpaVersion == IW_AUTH_WPA_VERSION_WPA) {
+		} else if (u4WpaVersion == IW_AUTH_WPA_VERSION_WPA ||
+			u4WpaVersion == IW_AUTH_WPA_VERSION_WPA2) {
 			switch (au4AkmSuites[i]) {
 			case WLAN_AKM_SUITE_8021X:
-				u4AkmSuite = WPA_AKM_SUITE_802_1X;
+				if (u4WpaVersion == IW_AUTH_WPA_VERSION_WPA)
+					u4AkmSuite = WPA_AKM_SUITE_802_1X;
+				else
+					u4AkmSuite = RSN_AKM_SUITE_802_1X;
 				break;
 			case WLAN_AKM_SUITE_PSK:
-				u4AkmSuite = WPA_AKM_SUITE_PSK;
-				break;
-			case WLAN_AKM_SUITE_8021X_SHA256:
-				u4AkmSuite = RSN_AKM_SUITE_802_1X_SHA256;
-				break;
-			case WLAN_AKM_SUITE_PSK_SHA256:
-				u4AkmSuite = RSN_AKM_SUITE_PSK_SHA256;
-				break;
-			default:
-				DBGLOG(REQ, WARN, "invalid Akm Suite (%08x)\n",
-				       au4AkmSuites[i]);
-				return -EINVAL;
-			}
-		} else if (u4WpaVersion == IW_AUTH_WPA_VERSION_WPA2) {
-			switch (au4AkmSuites[i]) {
-			case WLAN_AKM_SUITE_8021X:
-				u4AkmSuite = RSN_AKM_SUITE_802_1X;
-				break;
-			case WLAN_AKM_SUITE_PSK:
-				u4AkmSuite = RSN_AKM_SUITE_PSK;
+				if (u4WpaVersion == IW_AUTH_WPA_VERSION_WPA)
+					u4AkmSuite = WPA_AKM_SUITE_PSK;
+				else
+					u4AkmSuite = RSN_AKM_SUITE_PSK;
 				break;
 #if CFG_SUPPORT_802_11R
 			case WLAN_AKM_SUITE_FT_8021X:

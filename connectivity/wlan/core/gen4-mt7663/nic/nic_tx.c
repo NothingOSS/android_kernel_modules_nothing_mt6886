@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/nic/nic_tx.c#2
  */
@@ -3046,6 +3000,7 @@ uint32_t nicTxFlush(IN struct ADAPTER *prAdapter)
 
 	if (HAL_IS_TX_DIRECT(prAdapter)) {
 		nicTxDirectClearAllStaPsQ(prAdapter);
+		nicTxDirectClearAllStaPendQ(prAdapter);
 	} else {
 		/* ask Per STA/AC queue to be fllushed
 		 * and return all queued packets
@@ -3118,6 +3073,10 @@ uint32_t nicTxInitCmd(IN struct ADAPTER *prAdapter,
 			  (uint32_t) u2OverallBufferLength,
 			  (uint8_t *) pucOutputBuf,
 			  (uint32_t) prAdapter->u4CoalescingBufCachedSize);
+	if (fgIsBusAccessFailed) {
+		DBGLOG(TX, ERROR, "HAL_WRITE_TX_PORT Failed\n");
+		return WLAN_STATUS_FAILURE;
+	}
 
 	return WLAN_STATUS_SUCCESS;
 }
@@ -4443,6 +4402,41 @@ void nicTxDirectClearBssAbsentQ(IN struct ADAPTER
 	}
 }
 
+void nicTxDirectClearStaPendQ(IN struct ADAPTER *prAdapter,
+			    uint8_t ucStaRecIdx)
+{
+	struct GLUE_INFO *prGlueInfo = prAdapter->prGlueInfo;
+	struct QUE rNeedToFreeQue;
+	struct QUE *prNeedToFreeQue = &rNeedToFreeQue;
+	spinlock_t *prSpinLock = &prGlueInfo->rSpinLock[SPIN_LOCK_TX_DIRECT];
+	bool fgIrqDisabled = irqs_disabled();
+
+	QUEUE_INITIALIZE(prNeedToFreeQue);
+
+	if (fgIrqDisabled)
+		spin_lock(prSpinLock);
+	else
+		spin_lock_bh(prSpinLock);
+
+	if (QUEUE_IS_NOT_EMPTY(
+		    &prAdapter->rStaPendQueue[ucStaRecIdx])) {
+		QUEUE_MOVE_ALL(prNeedToFreeQue,
+			       &prAdapter->rStaPendQueue[ucStaRecIdx]);
+	}
+
+	if (fgIrqDisabled)
+		spin_unlock(prSpinLock);
+	else
+		spin_unlock_bh(prSpinLock);
+
+	if (QUEUE_IS_NOT_EMPTY(prNeedToFreeQue)) {
+		wlanProcessQueuedMsduInfo(prAdapter,
+			(struct MSDU_INFO *) QUEUE_GET_HEAD(prNeedToFreeQue));
+	}
+
+	prAdapter->u4StaPendBitmap &= ~BIT(ucStaRecIdx);
+}
+
 void nicTxDirectClearAllStaPsQ(IN struct ADAPTER *prAdapter)
 {
 	uint8_t ucStaRecIndex;
@@ -4466,6 +4460,19 @@ void nicTxDirectClearAllStaPsQ(IN struct ADAPTER *prAdapter)
 	}
 }
 
+void nicTxDirectClearAllStaPendQ(IN struct ADAPTER *prAdapter)
+{
+	uint8_t ucIdx; /* StaRec Index */
+
+	for (ucIdx = 0; ucIdx < CFG_STA_REC_NUM; ++ucIdx) {
+		if (prAdapter->u4StaPendBitmap == 0)
+			break;
+
+		if (QUEUE_IS_NOT_EMPTY(&prAdapter->rStaPendQueue[ucIdx]))
+			nicTxDirectClearStaPendQ(prAdapter, ucIdx);
+	}
+}
+
 /*----------------------------------------------------------------------------*/
 /*
  * \brief This function is to check the StaRec is in Ps or not,
@@ -4473,24 +4480,24 @@ void nicTxDirectClearAllStaPsQ(IN struct ADAPTER *prAdapter)
  *        stage respectively.
  *
  * \param[in] prAdapter   Pointer of Adapter
- * \param[in] ucStaRecIndex  Indictate which StaRec to be checked
+ * \param[in] prStaRec    Pointer of StaRec
  * \param[in] prQue       Pointer of MsduInfo queue which to be processed
  *
  * \retval none
  */
 /*----------------------------------------------------------------------------*/
 static void nicTxDirectCheckStaPsQ(IN struct ADAPTER
-	*prAdapter, uint8_t ucStaRecIndex, struct QUE *prQue)
+	*prAdapter, struct STA_RECORD *prStaRec, struct QUE *prQue)
 {
-	struct STA_RECORD *prStaRec;	/* The current focused STA */
 	struct MSDU_INFO *prMsduInfo;
 	struct QUE_ENTRY *prQueueEntry = (struct QUE_ENTRY *) NULL;
+	uint8_t ucStaRecIndex;
 	u_int8_t fgReturnStaPsQ = FALSE;
 
-	if (ucStaRecIndex >= CFG_STA_REC_NUM)
+	if (prStaRec == NULL)
 		return;
 
-	prStaRec = cnmGetStaRecByIndex(prAdapter, ucStaRecIndex);
+	ucStaRecIndex = prStaRec->ucIndex;
 
 	QUEUE_CONCATENATE_QUEUES(
 		&prAdapter->rStaPsQueue[ucStaRecIndex], prQue);
@@ -4500,11 +4507,6 @@ static void nicTxDirectCheckStaPsQ(IN struct ADAPTER
 
 	if (prMsduInfo == NULL) {
 		DBGLOG(TX, INFO, "prMsduInfo empty\n");
-		return;
-	}
-
-	if (prStaRec == NULL) {
-		DBGLOG(TX, INFO, "prStaRec empty\n");
 		return;
 	}
 
@@ -4544,6 +4546,8 @@ static void nicTxDirectCheckStaPsQ(IN struct ADAPTER
 				QUEUE_REMOVE_HEAD(
 					&prAdapter->rStaPsQueue[ucStaRecIndex],
 					prQueueEntry, struct QUE_ENTRY *);
+				if (prQueueEntry == NULL)
+					break;
 				prMsduInfo = (struct MSDU_INFO *) prQueueEntry;
 			} else {
 				break;
@@ -4650,6 +4654,134 @@ static void nicTxDirectCheckBssAbsentQ(IN struct ADAPTER
 
 /*----------------------------------------------------------------------------*/
 /*
+ * \brief This function is for fgIsTxAllowed == TRUE.
+ *        The data frame can start tx when the key is added.
+ *
+ * \param[in] prAdapter   Pointer of Adapter
+ * \param[in] prMsduInfo  The prMsduInfo that is wait for tx
+ * \param[in] ucStaRecIndex  Indictate which StaRec to be checked
+ * \param[in] prQue       Pointer of MsduInfo queue which to be processed
+ *
+ * \retval none
+ */
+/*----------------------------------------------------------------------------*/
+static void nicTxDirectDequeueStaPendQ(IN struct ADAPTER *prAdapter,
+				uint8_t ucStaIdx, struct QUE *prQue)
+{
+	KAL_SPIN_LOCK_DECLARATION();
+
+	/* ucStaIdx has been checked in nicTxDirectCheckStaPsPendQ */
+
+	if (prAdapter == NULL)
+		return;
+
+	/* the add key done case (include OPEN security) */
+	KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_RESOURCE);
+	if (QUEUE_IS_NOT_EMPTY(
+		&prAdapter->rStaPendQueue[ucStaIdx])) {
+		DBGLOG(TX, TRACE, "start tx pending q!\n");
+		QUEUE_CONCATENATE_QUEUES_HEAD(prQue,
+			&prAdapter->rStaPendQueue[ucStaIdx]);
+	}
+	KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_RESOURCE);
+	prAdapter->u4StaPendBitmap &= ~BIT(ucStaIdx);
+}
+
+/*----------------------------------------------------------------------------*/
+/*
+ * \brief This function is for fgIsTxAllowed == FALSE.
+ *        The Non-EAPol data frame shouldn't tx without the key added,
+ *        if the sta isn't OPEN security.
+ *
+ * \param[in] prAdapter   Pointer of Adapter
+ * \param[in] prMsduInfo  The prMsduInfo that is wait for tx
+ * \param[in] ucStaRecIndex  Indictate which StaRec to be checked
+ * \param[in] prQue       Pointer of MsduInfo queue which to be processed
+ *
+ * \retval none
+ */
+/*----------------------------------------------------------------------------*/
+static void nicTxDirectEnqueueStaPendQ(IN struct ADAPTER *prAdapter,
+	struct MSDU_INFO *prMsduInfo, uint8_t ucStaIdx, struct QUE *prQue)
+{
+	struct BSS_INFO *prBssInfo;
+
+	KAL_SPIN_LOCK_DECLARATION();
+
+	/* the add key isn't completed case */
+	if ((prMsduInfo == NULL) || (prAdapter == NULL))
+		return;
+
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter,
+		prMsduInfo->ucBssIndex);
+
+	if (prBssInfo == NULL) {
+		DBGLOG(TX, INFO, "prBssInfo is NULL\n");
+		return;
+	}
+
+	if (secIsProtectedBss(prAdapter, prBssInfo) &&
+	    (prMsduInfo->fgIs802_1x) && (prMsduInfo->fgIs802_1x_NonProtected) &&
+	    (!prAdapter->fgIsPostponeTxEAPOLM3)) {
+		/* The EAPoL frame can't be blocked. */
+		DBGLOG(TX, TRACE, "Is EAPoL frame\n");
+	} else {
+		DBGLOG(TX, TRACE, "fgIsTxAllowed isn't TRUE!\n");
+		KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_RESOURCE);
+		QUEUE_CONCATENATE_QUEUES(
+			&prAdapter->rStaPendQueue[ucStaIdx], prQue);
+		KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_RESOURCE);
+
+		prAdapter->u4StaPendBitmap |= BIT(ucStaIdx);
+	}
+}
+
+/*----------------------------------------------------------------------------*/
+/*
+ * \brief This function is to check the StaRec is in pending/PS state or not,
+ *        and store MsduInfo(s) or sent MsduInfo(s) to the next
+ *        stage respectively.
+ *        Avoid the data frame tx before the add key done.
+ *
+ * \param[in] prAdapter   Pointer of Adapter
+ * \param[in] prMsduInfo  The prMsduInfo that is wait for tx
+ * \param[in] ucStaRecIndex  Indictate which StaRec to be checked
+ * \param[in] prQue       Pointer of MsduInfo queue which to be processed
+ *
+ * \retval none
+ */
+/*----------------------------------------------------------------------------*/
+static void nicTxDirectCheckStaPsPendQ(IN struct ADAPTER *prAdapter,
+	struct MSDU_INFO *prMsduInfo, uint8_t ucStaIdx, struct QUE *prQue)
+{
+	struct STA_RECORD *prStaRec;	/* The current focused STA */
+
+	if (ucStaIdx >= CFG_STA_REC_NUM)
+		return;
+
+	prStaRec = cnmGetStaRecByIndex(prAdapter, ucStaIdx);
+
+	if (prStaRec == NULL) {
+		DBGLOG(TX, INFO, "prStaRec empty\n");
+		return;
+	}
+
+	if (prStaRec->fgIsTxAllowed == TRUE) {
+		/* dequeue pending Queue */
+		if (prAdapter->u4StaPendBitmap & BIT(ucStaIdx))
+			nicTxDirectDequeueStaPendQ(prAdapter, ucStaIdx, prQue);
+
+		/* handle PS queue */
+		nicTxDirectCheckStaPsQ(prAdapter, prStaRec, prQue);
+	} else {
+		/* enqueue to pending queue */
+		nicTxDirectEnqueueStaPendQ(prAdapter, prMsduInfo,
+					   ucStaIdx, prQue);
+	}
+}
+
+/*----------------------------------------------------------------------------*/
+/*
  * \brief Get Tc for hif port mapping.
  *
  * \param[in] prMsduInfo  Pointer of the MsduInfo
@@ -4665,7 +4797,7 @@ static uint8_t nicTxDirectGetHifTc(struct MSDU_INFO
 	if (prMsduInfo->ucWmmQueSet == DBDC_2G_WMM_INDEX) {
 		ucHifTc = TX_2G_WMM_PORT_NUM;
 	} else {
-		if (prMsduInfo->ucTC >= 0 && prMsduInfo->ucTC < TC_NUM)
+		if (prMsduInfo->ucTC < TC_NUM)
 			ucHifTc = prMsduInfo->ucTC;
 		else
 			ASSERT(0);
@@ -4817,9 +4949,10 @@ static uint32_t nicTxDirectStartXmitMain(struct sk_buff
 		QUEUE_INSERT_TAIL(prProcessingQue,
 				  (struct QUE_ENTRY *) prMsduInfo);
 
-		/* Power-save STA handling */
-		nicTxDirectCheckStaPsQ(prAdapter, prMsduInfo->ucStaRecIndex,
-				       prProcessingQue);
+		/* Power-save & TxAllowed STA handling */
+		nicTxDirectCheckStaPsPendQ(prAdapter, prMsduInfo,
+				prMsduInfo->ucStaRecIndex,
+				prProcessingQue);
 
 		/* Absent BSS handling */
 		nicTxDirectCheckBssAbsentQ(prAdapter,
@@ -4862,9 +4995,13 @@ static uint32_t nicTxDirectStartXmitMain(struct sk_buff
 	} else {
 		if (ucStaRecIndex != 0xff || ucBssIndex != 0xff) {
 			/* Power-save STA handling */
-			if (ucStaRecIndex != 0xff)
-				nicTxDirectCheckStaPsQ(prAdapter, ucStaRecIndex,
-						       prProcessingQue);
+			if (ucStaRecIndex != 0xff) {
+				nicTxDirectCheckStaPsPendQ(prAdapter,
+						NULL,
+						ucStaRecIndex,
+						prProcessingQue);
+			}
+
 
 			/* Absent BSS handling */
 			if (ucBssIndex != 0xff)
@@ -4919,6 +5056,9 @@ static uint32_t nicTxDirectStartXmitMain(struct sk_buff
 		}
 	}
 
+	if (!prMsduInfo)
+		return WLAN_STATUS_SUCCESS;
+
 	while (1) {
 		if (!halTxIsDataBufEnough(prAdapter, prMsduInfo)) {
 			QUEUE_INSERT_HEAD(
@@ -4937,6 +5077,8 @@ static uint32_t nicTxDirectStartXmitMain(struct sk_buff
 			QUEUE_REMOVE_HEAD(
 				&prAdapter->rTxDirectHifQueue[ucHifTc],
 				prQueueEntry, struct QUE_ENTRY *);
+			if (prQueueEntry == NULL)
+				break;
 			prMsduInfo = (struct MSDU_INFO *) prQueueEntry;
 		} else {
 			break;
@@ -5006,13 +5148,26 @@ void nicTxDirectTimerCheckHifQ(unsigned long data)
 #endif
 
 	uint8_t ucHifTc = 0;
-	uint32_t u4StaPsBitmap, u4BssAbsentBitmap;
+	uint32_t u4StaPsBitmap, u4BssAbsentBitmap, u4StaPendBitmap;
 	uint8_t ucStaRecIndex, ucBssIndex;
 
 	spin_lock_bh(&prGlueInfo->rSpinLock[SPIN_LOCK_TX_DIRECT]);
 
 	u4StaPsBitmap = prAdapter->u4StaPsBitmap;
 	u4BssAbsentBitmap = prAdapter->u4BssAbsentBitmap;
+	u4StaPendBitmap = prAdapter->u4StaPendBitmap;
+
+	if (u4StaPendBitmap) {
+		for (ucStaRecIndex = 0; ucStaRecIndex < CFG_STA_REC_NUM;
+		     ++ucStaRecIndex) {
+			if (u4StaPendBitmap & BIT(ucStaRecIndex)) {
+				nicTxDirectStartXmitMain(NULL, NULL, prAdapter,
+					0xff, ucStaRecIndex, 0xff);
+				DBGLOG(TX, INFO, "Check pending Queue idx=%u\n",
+					ucStaRecIndex);
+			}
+		}
+	}
 
 	if (u4StaPsBitmap)
 		for (ucStaRecIndex = 0; ucStaRecIndex < CFG_STA_REC_NUM;

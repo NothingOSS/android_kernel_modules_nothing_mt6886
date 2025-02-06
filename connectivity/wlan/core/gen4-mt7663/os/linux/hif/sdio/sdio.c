@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /******************************************************************************
 *[File]             sdio.c
 *[Version]          v1.0
@@ -96,10 +50,6 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
-#endif
-
-#if (CFG_SDIO_1BIT_DATA_MODE == 1)
-#include "test_driver_sdio_ops.h"
 #endif
 
 /*******************************************************************************
@@ -891,14 +841,6 @@ u_int8_t glBusInit(void *pvData)
 
 	sdio_claim_host(func);
 
-#if (CFG_SDIO_1BIT_DATA_MODE == 1)
-	ret = sdio_disable_wide(func->card);
-	if (ret)
-		DBGLOG(HAL, ERROR, "glBusInit() Error at enabling SDIO 1-BIT data mode.\n");
-	else
-		DBGLOG(HAL, INFO, "glBusInit() SDIO 1-BIT data mode is working.\n");
-#endif
-
 #if (CFG_SDIO_ASYNC_IRQ_AUTO_ENABLE == 1)
 	ret = mtk_sdio_async_irq_enable(func);
 	if (ret == FALSE)
@@ -1115,6 +1057,21 @@ u_int8_t kalDevRegRead_mac(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Regist
 	uint32_t value;
 	uint32_t u4Time, u4Current;
 	uint8_t ucResult;/* For Unchecked return value*/
+	u_int8_t fgOwnStatus = 0;
+	u_int8_t fgIssueOwn = FALSE;
+
+	HAL_LP_OWN_RD(prGlueInfo->prAdapter, &fgOwnStatus);
+	if (!fgOwnStatus) {
+		fgOwnStatus = nicpmSetDriverOwn(prGlueInfo->prAdapter);
+		if (!fgOwnStatus) {
+			DBGLOG(HAL, ERROR,
+				"Driver own fail before R/W mailbox CR!");
+			ucResult = FALSE;
+			goto Exit;
+		} else {
+			fgIssueOwn = TRUE;
+		}
+	}
 
     /* progrqm h2d mailbox0 as interested register address */
 	ucResult = kalDevRegWrite(prGlueInfo, MCR_H2DSM0R, u4Register);
@@ -1136,7 +1093,8 @@ u_int8_t kalDevRegRead_mac(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Regist
 		/* check bit16 of WHISR assert for read register response */
 		ucResult = kalDevRegRead(prGlueInfo, MCR_WHISR, &value);
 
-		if (value & SDIO_MAILBOX_FUNC_READ_REG_IDX) {
+		if ((value & SDIO_MAILBOX_FUNC_READ_REG_IDX) ||
+			prGlueInfo->prAdapter->fgGetMailBoxRWAck) {
 			/* read d2h mailbox0 for interested register address */
 			ucResult = kalDevRegRead(prGlueInfo,
 						MCR_D2HRM0R, &value);
@@ -1145,14 +1103,18 @@ u_int8_t kalDevRegRead_mac(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Regist
 				DBGLOG(HAL, ERROR, "ERROR! kalDevRegRead_mac():register address mis-match");
 				DBGLOG(HAL, ERROR, "(u4Register = 0x%08x, reported register = 0x%08x)\n",
 				u4Register, value);
-				return  FALSE;
+
+				ucResult = FALSE;
+				goto Exit;
 			}
 
 			/* read d2h mailbox1 for the value of the register */
 			ucResult = kalDevRegRead(prGlueInfo,
 						MCR_D2HRM1R, &value);
 			*pu4Value = value;
-			return	TRUE;
+			/* Set MCR_H2DSM0R to 0 for ack to FW. */
+			ucResult = kalDevRegWrite(prGlueInfo, MCR_H2DSM0R, 0);
+			goto Exit;
 		}
 
 		/* timeout exceeding check */
@@ -1162,12 +1124,22 @@ u_int8_t kalDevRegRead_mac(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Regist
 			|| (u4Current < u4Time && ((u4Current + (0xFFFFFFFF - u4Time))
 			> HIF_SDIO_INTERRUPT_RESPONSE_TIMEOUT))) {
 			DBGLOG(HAL, ERROR, "ERROR: kalDevRegRead_mac(): response timeout\n");
-			return	FALSE;
+			ucResult = FALSE;
+			goto Exit;
 		}
 
 		/* Response packet is not ready */
 		kalUdelay(50);
 	} while (1);
+
+Exit:
+	if (fgIssueOwn)
+		nicpmSetFWOwn(prGlueInfo->prAdapter, FALSE);
+
+	prGlueInfo->prAdapter->fgGetMailBoxRWAck = FALSE;
+
+	return ucResult;
+
 }
 
 /*----------------------------------------------------------------------------*/
@@ -1237,6 +1209,21 @@ u_int8_t kalDevRegWrite_mac(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Regis
 	uint32_t value;
 	uint32_t u4Time, u4Current;
 	uint8_t ucResult; /* For Unchecked return value*/
+	u_int8_t fgOwnStatus = 0;
+	u_int8_t fgIssueOwn = FALSE;
+
+	HAL_LP_OWN_RD(prGlueInfo->prAdapter, &fgOwnStatus);
+	if (!fgOwnStatus) {
+		fgOwnStatus = nicpmSetDriverOwn(prGlueInfo->prAdapter);
+		if (!fgOwnStatus) {
+			DBGLOG(HAL, ERROR,
+				"Driver own fail before R/W mailbox CR!");
+			ucResult = FALSE;
+			goto Exit;
+		} else {
+			fgIssueOwn = TRUE;
+		}
+	}
 
 	/* progrqm h2d mailbox0 as interested register address */
 	ucResult = kalDevRegWrite(prGlueInfo, MCR_H2DSM0R, u4Register);
@@ -1261,7 +1248,8 @@ u_int8_t kalDevRegWrite_mac(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Regis
 		/* check bit17 of WHISR assert for response */
 		ucResult = kalDevRegRead(prGlueInfo, MCR_WHISR, &value);
 
-		if (value & SDIO_MAILBOX_FUNC_WRITE_REG_IDX) {
+		if ((value & SDIO_MAILBOX_FUNC_WRITE_REG_IDX) ||
+			prGlueInfo->prAdapter->fgGetMailBoxRWAck) {
 			/* read d2h mailbox0 for interested register address */
 			ucResult = kalDevRegRead(prGlueInfo,
 						MCR_D2HRM0R, &value);
@@ -1270,9 +1258,13 @@ u_int8_t kalDevRegWrite_mac(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Regis
 				DBGLOG(HAL, ERROR, "ERROR! kalDevRegWrite_mac():register address mis-match");
 				DBGLOG(HAL, ERROR, "(u4Register = 0x%08x, reported register = 0x%08x)\n",
 				u4Register, value);
-				return  FALSE;
+
+				ucResult = FALSE;
+				goto Exit;
 			}
-			return	TRUE;
+			/* Set MCR_H2DSM0R to 0 for ack to FW. */
+			ucResult = kalDevRegWrite(prGlueInfo, MCR_H2DSM0R, 0);
+			goto Exit;
 		}
 
 		/* timeout exceeding check */
@@ -1282,12 +1274,21 @@ u_int8_t kalDevRegWrite_mac(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Regis
 			|| (u4Current < u4Time && ((u4Current + (0xFFFFFFFF - u4Time))
 			> HIF_SDIO_INTERRUPT_RESPONSE_TIMEOUT))) {
 			DBGLOG(HAL, ERROR, "ERROR: kalDevRegWrite_mac(): response timeout\n");
-			return	FALSE;
+			ucResult = FALSE;
+			goto Exit;
 		}
 
 		/* Response packet is not ready */
 		kalUdelay(50);
 	} while (1);
+Exit:
+	if (fgIssueOwn)
+		nicpmSetFWOwn(prGlueInfo->prAdapter, FALSE);
+
+	prGlueInfo->prAdapter->fgGetMailBoxRWAck = FALSE;
+
+	return ucResult;
+
 }
 
 /*----------------------------------------------------------------------------*/

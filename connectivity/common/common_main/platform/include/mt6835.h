@@ -19,6 +19,7 @@
 
 #define	PRIMARY_ADIE	0x6631
 #define	SECONDARY_ADIE	0x6635
+#define TERTIARY_ADIE	0x6637
 #define SECONDARY_ADIE_OFFSET	0x240000
 
 /* if clock of TCXO is controlled by GPIO, CLK_CTRL_TCXOENA_REQ should be 1. */

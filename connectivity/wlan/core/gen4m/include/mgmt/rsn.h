@@ -296,6 +296,12 @@
  *******************************************************************************
  */
 
+struct MSG_MIC_ERROR {
+	struct MSG_HDR rMsgHdr; /* Must be the first member */
+	struct STA_RECORD *prStaRec;
+	u_int8_t fgFlags;
+};
+
 /*******************************************************************************
  *                                 M A C R O S
  *******************************************************************************
@@ -370,6 +376,9 @@ void rsnParserCheckForRSNCCMPPSK(struct ADAPTER *prAdapter,
 				 struct STA_RECORD *prStaRec,
 				 uint16_t *pu2StatusCode);
 #endif
+
+void rsnMicErrorHandleMsg(struct ADAPTER *prAdapter,
+				struct MSG_HDR *prMsgHdr);
 
 void rsnTkipHandleMICFailure(struct ADAPTER *prAdapter,
 			     struct STA_RECORD *prSta,

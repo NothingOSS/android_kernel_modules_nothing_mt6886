@@ -1262,9 +1262,7 @@ void nicRxProcessPktWithoutReorder(struct ADAPTER
 	}
 
 #if CFG_SUPPORT_MULTITHREAD
-	if (HAL_IS_RX_DIRECT(prAdapter)
-		|| kalRxNapiValidSkb(prAdapter->prGlueInfo, prSwRfb->pvPacket)
-		) {
+	if (HAL_IS_RX_DIRECT(prAdapter)) {
 		kalRxIndicateOnePkt(prAdapter->prGlueInfo, prSwRfb->pvPacket);
 		if (fgIsRetained)
 			RX_ADD_CNT(prRxCtrl, RX_DATA_RETAINED_COUNT, 1);
@@ -1984,6 +1982,17 @@ void nicRxProcessEventPacket(struct ADAPTER *prAdapter,
 	prChipInfo = prAdapter->chip_info;
 	prEvent = (struct WIFI_EVENT *)
 			(prSwRfb->pucRecvBuff + prChipInfo->rxd_size);
+
+	if (prEvent->u2PacketLength > RX_GET_PACKET_MAX_SIZE(prAdapter)
+		|| prEvent->u2PacketLength < sizeof(struct WIFI_EVENT)) {
+		DBGLOG(NIC, ERROR,
+			"Invalid RX event: ID[0x%02X] SEQ[%u] LEN[%u]\n",
+			prEvent->ucEID, prEvent->ucSeqNum,
+			prEvent->u2PacketLength);
+		nicRxReturnRFB(prAdapter, prSwRfb);
+		return;
+	}
+
 	if (prEvent->ucEID != EVENT_ID_DEBUG_MSG
 	    && prEvent->ucEID != EVENT_ID_ASSERT_DUMP) {
 		DBGLOG(NIC, TRACE,
@@ -2091,6 +2100,17 @@ void nicRxProcessMgmtPacket(struct ADAPTER *prAdapter,
 
 	if (!prSwRfb->pvHeader || !prSwRfb->pvPacket) {
 		RX_INC_CNT(&prAdapter->rRxCtrl, RX_NULL_PACKET_COUNT);
+		RX_INC_CNT(&prAdapter->rRxCtrl, RX_DROP_TOTAL_COUNT);
+		nicRxReturnRFB(prAdapter, prSwRfb);
+		return;
+	}
+
+	if (prSwRfb->u2HeaderLen < sizeof(struct WLAN_MAC_HEADER)
+		|| prSwRfb->u2PacketLen < prSwRfb->u2HeaderLen
+		|| prSwRfb->u2PacketLen > RX_GET_PACKET_MAX_SIZE(prAdapter)) {
+		DBGLOG(RX, WARN,
+			"Mgmt packet length check fail! length[H,P]:%u,%u\n",
+			prSwRfb->u2HeaderLen, prSwRfb->u2PacketLen);
 		RX_INC_CNT(&prAdapter->rRxCtrl, RX_DROP_TOTAL_COUNT);
 		nicRxReturnRFB(prAdapter, prSwRfb);
 		return;

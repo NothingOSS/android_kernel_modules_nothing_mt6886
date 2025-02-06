@@ -1929,7 +1929,7 @@ u32 kbase_csf_firmware_set_gpu_idle_hysteresis_time(struct kbase_device *kbdev, 
 	mutex_unlock(&kbdev->fw_load_lock);
 
 	kbase_csf_scheduler_pm_active(kbdev);
-	if (kbase_csf_scheduler_wait_mcu_active(kbdev)) {
+	if (kbase_csf_scheduler_killable_wait_mcu_active(kbdev)) {
 		dev_err(kbdev->dev,
 			"Unable to activate the MCU, the idle hysteresis value shall remain unchanged");
 		kbase_csf_scheduler_pm_idle(kbdev);
@@ -2140,6 +2140,7 @@ int kbase_csf_firmware_early_init(struct kbase_device *kbdev)
 		  kbase_csf_firmware_reload_worker);
 	INIT_WORK(&kbdev->csf.fw_error_work, firmware_error_worker);
 
+	init_rwsem(&kbdev->csf.mmu_sync_sem);
 	mutex_init(&kbdev->csf.reg_lock);
 
 	kbdev->csf.fw = (struct kbase_csf_mcu_fw){ .data = NULL };
@@ -2564,8 +2565,6 @@ void kbase_csf_wait_protected_mode_enter(struct kbase_device *kbdev)
 {
 	int err;
 
-	lockdep_assert_held(&kbdev->mmu_hw_mutex);
-
 	err = wait_for_global_request(kbdev, GLB_REQ_PROTM_ENTER_MASK);
 
 	if (!err) {
@@ -2676,7 +2675,9 @@ int kbase_csf_trigger_firmware_config_update(struct kbase_device *kbdev)
 
 	/* Ensure GPU is powered-up until we complete config update.*/
 	kbase_csf_scheduler_pm_active(kbdev);
-	kbase_csf_scheduler_wait_mcu_active(kbdev);
+	err = kbase_csf_scheduler_killable_wait_mcu_active(kbdev);
+	if (err)
+		goto exit;
 
 	/* The 'reg_lock' is also taken and is held till the update is
 	 * complete, to ensure the config update gets serialized.
@@ -2693,6 +2694,7 @@ int kbase_csf_trigger_firmware_config_update(struct kbase_device *kbdev)
 				      GLB_REQ_FIRMWARE_CONFIG_UPDATE_MASK);
 	mutex_unlock(&kbdev->csf.reg_lock);
 
+exit:
 	kbase_csf_scheduler_pm_idle(kbdev);
 	return err;
 }

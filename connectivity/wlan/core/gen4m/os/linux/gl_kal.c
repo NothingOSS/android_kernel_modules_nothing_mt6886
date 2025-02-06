@@ -1055,6 +1055,9 @@ void kalUpdateRxCSUMOffloadParam(void *pvPacket,
 void kalPacketFree(struct GLUE_INFO *prGlueInfo,
 		   void *pvPacket)
 {
+	if (prGlueInfo)
+		RX_INC_CNT(&prGlueInfo->prAdapter->rRxCtrl,
+			   RX_PACKET_FREE_COUNT);
 	dev_kfree_skb((struct sk_buff *)pvPacket);
 }
 
@@ -1102,6 +1105,8 @@ void *kalPacketAlloc(struct GLUE_INFO *prGlueInfo,
 		*ppucData = (uint8_t *) (prSkb->data);
 
 		kalResetPacket(prGlueInfo, (void *) prSkb);
+		RX_INC_CNT(&prGlueInfo->prAdapter->rRxCtrl,
+			   RX_PACKET_ALLOC_COUNT);
 	}
 #if DBG
 	{
@@ -4104,8 +4109,37 @@ u_int8_t kalGetEthDestAddr(struct GLUE_INFO *prGlueInfo,
 	return TRUE;
 }
 
-void
-kalOidComplete(struct GLUE_INFO *prGlueInfo,
+/**
+ * isOidWaitingComplete() - Check whether an OID waiting for completion
+ *
+ * !completion_done() represents for two cases:
+ *   1. all wait() are complete()ed, i.e., no pending waiters
+ *   2. there is a pending waiter waiting for complete() before timeout
+ * WTF?
+ *
+ * completion_done() returns true returns true if x->done != 0.
+ * It indicates there is one or more complete() were not consumed by wait().
+ * Otherwise, if it returns false, x->done == 0, stands for there are no
+ * posted completions that were not yet consumed by waiters.
+ * The Linux documents add a comment said it implying that there are waiters,
+ * however, it only points to case 2.
+ *
+ * The driver uses fgOidWaiting, which were set ONE before calling ioctl,
+ * and to be set ZERO after calling complete(), to distinguish the two cases.
+ * The initial state of the flag with value 0 is equivalent to no waiters.
+ *
+ * We check completion_done() again to avoid setting x->done more than 1.
+ *
+ * Return: TRUE: there is an OID waiter
+ *	   FALSE: there is no OID waiter
+ */
+static u_int8_t isOidWaitingComplete(struct GLUE_INFO *prGlueInfo)
+{
+	return prGlueInfo->fgOidWaiting &&
+		!completion_done(&prGlueInfo->rPendComp);
+}
+
+void kalOidComplete(struct GLUE_INFO *prGlueInfo,
 	       struct CMD_INFO *prCmdInfo, uint32_t u4SetQueryInfoLen,
 	       uint32_t rOidStatus)
 {
@@ -4115,29 +4149,29 @@ kalOidComplete(struct GLUE_INFO *prGlueInfo,
 	ASSERT(prGlueInfo);
 
 	prIoReq = &prGlueInfo->OidEntry;
-	DBGLOG(NIC, TRACE, "Glue=%p Cmd=%p InformationBuffer=%p QryInfoLen=%p",
-			prGlueInfo, prCmdInfo,
-			prCmdInfo ? prCmdInfo->pvInformationBuffer : NULL,
-			prIoReq->pu4QryInfoLen);
+	DBGLOG(NIC, TRACE,
+		"Cmd=%p pfnOidHandler=%ps InformationBuffer=%p QryInfoLen=%p",
+		prCmdInfo, prIoReq->pfnOidHandler,
+		prCmdInfo ? prCmdInfo->pvInformationBuffer : NULL,
+		prIoReq->pu4QryInfoLen);
 
 	/* remove timeout check timer */
 	wlanoidClearTimeoutCheck(prGlueInfo->prAdapter);
 
 	/* complete ONLY if there are waiters */
-	if (!completion_done(&prGlueInfo->rPendComp)) {
-
+	if (isOidWaitingComplete(prGlueInfo)) {
 		/* only update when there are waiters */
 		prGlueInfo->rPendStatus = rOidStatus;
 		*prIoReq->pu4QryInfoLen = u4SetQueryInfoLen;
-		prGlueInfo->u4OidCompleteFlag = 1;
 
-		kalUpdateCompHdlrRec(prGlueInfo->prAdapter,
-			NULL, prCmdInfo);
+		kalUpdateCompHdlrRec(prGlueInfo->prAdapter, NULL, prCmdInfo);
 
 		if (prCmdInfo)
 			DBGLOG(TX, TRACE, "rPendComp=%p, cmd=0x%02X, seq=%u",
 				&prGlueInfo->rPendComp,
 				prCmdInfo->ucCID, prCmdInfo->ucCmdSeqNum);
+
+		prGlueInfo->fgOidWaiting = FALSE;
 		complete(&prGlueInfo->rPendComp);
 	} else {
 		uint32_t wIdx, cIdx;
@@ -4168,8 +4202,7 @@ kalOidComplete(struct GLUE_INFO *prGlueInfo,
 	if (rOidStatus == WLAN_STATUS_SUCCESS)
 		DBGLOG(INIT, TRACE, "Complete OID, status:success\n");
 	else
-		DBGLOG(INIT, WARN, "Complete OID, status:0x%08x\n",
-		       rOidStatus);
+		DBGLOG(INIT, WARN, "Complete OID, status:0x%08x\n", rOidStatus);
 
 	/* else let it timeout on kalIoctl entry */
 }
@@ -4370,8 +4403,7 @@ uint32_t
 kalIoctlByBssIdx(struct GLUE_INFO *prGlueInfo,
 	 PFN_OID_HANDLER_FUNC pfnOidHandler,
 	 void *pvInfoBuf, uint32_t u4InfoBufLen,
-	 uint32_t *pu4QryInfoLen,
-	 uint8_t ucBssIndex)
+	 uint32_t *pu4QryInfoLen, uint8_t ucBssIndex)
 {
 	struct GL_IO_REQ *prIoReq = NULL;
 	struct KAL_THREAD_SCHEDSTATS schedstats;
@@ -4453,7 +4485,7 @@ kalIoctlByBssIdx(struct GLUE_INFO *prGlueInfo,
 	/* <5> Reset the status of pending OID */
 	prGlueInfo->rPendStatus = WLAN_STATUS_FAILURE;
 	/* prGlueInfo->u4TimeoutFlag = 0; */
-	prGlueInfo->u4OidCompleteFlag = 0;
+	prGlueInfo->fgOidWaiting = TRUE;
 
 	/* <7> schedule the OID bit
 	 * Use memory barrier to ensure OidEntry is written done and then set
@@ -4507,13 +4539,13 @@ kalIoctlByBssIdx(struct GLUE_INFO *prGlueInfo,
 	 */
 	kalThreadSchedMark(prGlueInfo->main_thread, &schedstats);
 
-	DBGLOG(OID, TRACE, "waiting, Glue=%p, rPend=%p, BufLen=%p, QryLen=%p",
-			prGlueInfo, &prGlueInfo->rPendComp,
-			prIoReq->u4InfoBufLen, prIoReq->pu4QryInfoLen);
+	DBGLOG(OID, TRACE, "waiting, pfnOidHandler=%ps, BufLen=%u, QryLen=%p",
+			prIoReq->pfnOidHandler, prIoReq->u4InfoBufLen,
+			prIoReq->pu4QryInfoLen);
 	waitRet = wait_for_completion_timeout(&prGlueInfo->rPendComp,
 				MSEC_TO_JIFFIES(30*1000));
-	DBGLOG(OID, TRACE, "wait=%u, Glue=%p, rPend=%p, BufLen=%p, QryLen=%p",
-			waitRet, prGlueInfo, &prGlueInfo->rPendComp,
+	DBGLOG(OID, TRACE, "wait=%u, pfnOidHandler=%ps, BufLen=%u, QryLen=%p",
+			waitRet, prIoReq->pfnOidHandler,
 			prIoReq->u4InfoBufLen, prIoReq->pu4QryInfoLen);
 	kalThreadSchedUnmark(prGlueInfo->main_thread, &schedstats);
 	if (waitRet > 0) {
@@ -4525,11 +4557,7 @@ kalIoctlByBssIdx(struct GLUE_INFO *prGlueInfo,
 			ret = prGlueInfo->rPendStatus;
 		else
 			ret = prIoReq->rStatus;
-
-		/* reset u4OidCompleteFlag when wait timeout */
-		prGlueInfo->u4OidCompleteFlag = 0;
 	} else {
-
 #if 0
 		/* Case 2: timeout */
 		/* clear pending OID's cmd in CMD queue */
@@ -5637,15 +5665,17 @@ int main_thread(void *data)
 
 			if (prIoReq->rStatus != WLAN_STATUS_PENDING) {
 				/* complete ONLY if there are waiters */
-				if (!completion_done(
-					&prGlueInfo->rPendComp)) {
+				if (isOidWaitingComplete(prGlueInfo)) {
 					kalUpdateCompHdlrRec(
 						prGlueInfo->prAdapter,
 						prIoReq->pfnOidHandler,
 						NULL);
 
-					DBGLOG(NIC, TRACE, "rPendComp=%p",
-						&prGlueInfo->rPendComp);
+					DBGLOG(NIC, TRACE,
+						"rPendComp=%p pfnOidHandler=%ps",
+						&prGlueInfo->rPendComp,
+						prIoReq->pfnOidHandler);
+					prGlueInfo->fgOidWaiting = FALSE;
 					complete(&prGlueInfo->rPendComp);
 				} else
 					DBGLOG(INIT, WARN,
@@ -5793,9 +5823,7 @@ int main_thread(void *data)
 	/* remove pending oid */
 	wlanReleasePendingOid(prGlueInfo->prAdapter, 1);
 
-	if (kalIsResetting() &&
-	    !completion_done(&prGlueInfo->rPendComp) &&
-	    !prGlueInfo->u4OidCompleteFlag) {
+	if (kalIsResetting() && isOidWaitingComplete(prGlueInfo)) {
 		struct GL_IO_REQ *prIoReq;
 
 		DBGLOG(INIT, INFO,
@@ -5804,8 +5832,7 @@ int main_thread(void *data)
 		prIoReq = &(prGlueInfo->OidEntry);
 		prIoReq->rStatus = WLAN_STATUS_FAILURE;
 
-		prGlueInfo->u4OidCompleteFlag = 1;
-
+		prGlueInfo->fgOidWaiting = FALSE;
 		complete(&prGlueInfo->rPendComp);
 	}
 
@@ -6093,7 +6120,7 @@ void kalOidCmdClearance(struct GLUE_INFO *prGlueInfo)
 			kalOidComplete(prGlueInfo, prCmdInfo, 0,
 				       WLAN_STATUS_NOT_ACCEPTED);
 
-		prGlueInfo->u4OidCompleteFlag = 1;
+		prGlueInfo->fgOidWaiting = FALSE;
 		cmdBufFreeCmdInfo(prGlueInfo->prAdapter, prCmdInfo);
 		GLUE_DEC_REF_CNT(prGlueInfo->i4TxPendingCmdNum);
 	}
@@ -9891,14 +9918,17 @@ static uint32_t kalPerMonUpdate(struct ADAPTER *prAdapter)
 #endif /* CFG_RFB_TRACK */
 
 #define TEMP_LOG_TEMPLATE \
-	"ndevdrp:%s NAPI[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu] " \
+	"ndevdrp:%s NAPI[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%u] " \
 	RRO_LOG_TEMPLATE \
 	"RxReorder[%s] " \
 	RRB_TRACK_TEMPLATE \
-	"drv[RM,IL,RI,RT,RM,RW,RA,RB,DT,NS,IB,HS,LS,DD,ME,BD,NI," \
-	"DR,TE,PE,CE,DN,FE,DE,IE,TME,ID,NL]:%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu," \
-	"%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu," \
-	"%lu,%lu,%lu\n"
+	"drv[RM,IL,RI,PA,PF,DU,DA,RT,RM,RW,RA,RB,DT,NS," \
+	"IB,HS,LS,DD,ME,BD,NI,DR,TE,PE," \
+	"CE,DN,FE,DE,IE,TME,ID,NL]:" \
+	"%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu," \
+	"%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu," \
+	"%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu," \
+	"%lu,%lu\n" \
 
 	DBGLOG(SW4, INFO, TEMP_LOG_TEMPLATE,
 		head3,
@@ -9906,11 +9936,13 @@ static uint32_t kalPerMonUpdate(struct ADAPTER *prAdapter)
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_TASKLET_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_WORK_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_SCHEDULE_COUNT),
+		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_LEGACY_SCHED_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_FIFO_IN_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_FIFO_OUT_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_FIFO_FULL_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_FIFO_ABNORMAL_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NAPI_FIFO_ABN_FULL_COUNT),
+		skb_queue_len(&glue->rRxNapiSkbQ),
 #if (CFG_SUPPORT_HOST_OFFLOAD == 1)
 		prAdapter->rWifiVar.fgEnableRro,
 		RX_RRO_GET_CNT(&prAdapter->rRxCtrl, RRO_STEP_ONE),
@@ -9954,6 +9986,10 @@ static uint32_t kalPerMonUpdate(struct ADAPTER *prAdapter)
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_MPDU_TOTAL_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_ICS_LOG_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_DATA_INDICATION_COUNT),
+		RX_GET_CNT(&prAdapter->rRxCtrl, RX_PACKET_ALLOC_COUNT),
+		RX_GET_CNT(&prAdapter->rRxCtrl, RX_PACKET_FREE_COUNT),
+		RX_GET_CNT(&prAdapter->rRxCtrl, RX_DATA_RETURNED_COUNT),
+		RX_GET_CNT(&prAdapter->rRxCtrl, RX_DATA_RETAINED_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl,	RX_DATA_REORDER_TOTAL_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl,	RX_DATA_REORDER_MISS_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl,	RX_DATA_REORDER_WITHIN_COUNT),
@@ -12432,6 +12468,29 @@ uint8_t kalRxGroInit(struct net_device *prDev)
 	return 0;
 }
 
+#if CFG_SUPPORT_RX_NAPI_THREADED
+void kalNapiThreadedInit(struct GLUE_INFO *prGlueInfo)
+{
+#if KERNEL_VERSION(5, 15, 0) <= CFG80211_VERSION_CODE
+	if (dev_set_threaded(&prGlueInfo->dummy_dev, TRUE) != 0) {
+		prGlueInfo->napi_thread = NULL;
+		DBGLOG(INIT, ERROR, "Napi Threaded Init Fail\n");
+	} else {
+		prGlueInfo->napi_thread = prGlueInfo->napi.thread;
+		prGlueInfo->u4RxNapiThreadPid =
+			task_pid_nr(prGlueInfo->napi_thread);
+		DBGLOG(INIT, TRACE, "Napi Threaded Init Done\n");
+	}
+#endif
+}
+
+void kalNapiThreadedUninit(struct GLUE_INFO *prGlueInfo)
+{
+	prGlueInfo->napi_thread = NULL;
+	DBGLOG(INIT, TRACE, "Napi Threaded Uninit Done\n");
+}
+#endif /* CFG_SUPPORT_RX_NAPI_THREADED */
+
 uint8_t kalNapiInit(struct GLUE_INFO *prGlueInfo)
 {
 	spin_lock_init(&prGlueInfo->napi_spinlock);
@@ -12440,7 +12499,20 @@ uint8_t kalNapiInit(struct GLUE_INFO *prGlueInfo)
 	init_dummy_netdev(&prGlueInfo->dummy_dev);
 	netif_napi_add(&prGlueInfo->dummy_dev, &prGlueInfo->napi,
 		kalNapiPoll, NAPI_POLL_WEIGHT);
+#if CFG_SUPPORT_RX_NAPI_THREADED
+		kalNapiThreadedInit(prGlueInfo);
+#endif /* CFG_SUPPORT_RX_NAPI_THREADED */
 	DBGLOG(INIT, INFO, "Napi Init Done\n");
+	return 0;
+}
+
+uint8_t kalNapiUninit(struct GLUE_INFO *prGlueInfo)
+{
+	netif_napi_del(&prGlueInfo->napi);
+#if CFG_SUPPORT_RX_NAPI_THREADED
+	kalNapiThreadedUninit(prGlueInfo);
+#endif /* CFG_SUPPORT_RX_NAPI_THREADED */
+	DBGLOG(INIT, INFO, "Napi Uninit Done\n");
 	return 0;
 }
 
@@ -12556,7 +12628,10 @@ static int kalNapiPollSwRfb(struct napi_struct *napi, int budget)
 end:
 	GLUE_DEC_REF_CNT(i4UserCnt);
 
-	kal_napi_complete_done(napi, work_done);
+#if !CFG_SUPPORT_RX_GRO_PEAK
+	if (work_done < budget)
+#endif
+		kal_napi_complete_done(napi, work_done);
 
 	return work_done;
 }
@@ -12605,6 +12680,7 @@ int kalNapiPoll(struct napi_struct *napi, int budget)
 	/* follow timeout rule in net_rx_action() */
 	const unsigned long ulTimeLimit = jiffies + 2;
 #endif
+	static int32_t i4UserCnt;
 
 	/* Added in qmHandleReorderBubbleTimeout */
 	while (prReorderQueParm =
@@ -12622,6 +12698,10 @@ int kalNapiPoll(struct napi_struct *napi, int budget)
 		/* Handle SwRFBs under RX-direct mode */
 		return kalNapiPollSwRfb(napi, budget);
 	}
+
+	/* Allow one user only */
+	if (GLUE_INC_REF_CNT(i4UserCnt) > 1)
+		goto end;
 
 	prRxNapiSkbQ = &prGlueInfo->rRxNapiSkbQ;
 	prFlushSkbQ = &rFlushSkbQ;
@@ -12648,7 +12728,7 @@ next_try:
 			DBGLOG(RX, ERROR, "skb NULL %d %d\n",
 				work_done, skb_queue_len(prFlushSkbQ));
 			kal_napi_complete_done(napi, work_done);
-			return work_done;
+			goto end;
 		}
 
 		/*
@@ -12681,19 +12761,19 @@ next_try:
 
 	/* Debug check only */
 	if (!time_before_eq(jiffies, ulTimeLimit))
-		DBGLOG(RX, WARN, "timeout hit %d\n", jiffies-ulTimeLimit);
-
-	if (work_done > budget)
-		work_done = budget;
-
-	kal_napi_complete_done(napi, work_done);
-#else /* CFG_SUPPORT_RX_GRO_PEAK */
-	if (work_done < budget) {
-		kal_napi_complete_done(napi, work_done);
-		if (skb_queue_len(prRxNapiSkbQ))
-			napi_schedule(napi);
-	}
+		DBGLOG_LIMITED(RX, WARN, "timeout hit %lu\n",
+			jiffies-ulTimeLimit);
 #endif /* CFG_SUPPORT_RX_GRO_PEAK */
+
+	work_done = kal_min_t(int, work_done, budget-1);
+	kal_napi_complete_done(napi, work_done);
+	if (skb_queue_len(prRxNapiSkbQ)) {
+		RX_INC_CNT(&prAdapter->rRxCtrl, RX_NAPI_LEGACY_SCHED_COUNT);
+		napi_schedule(napi);
+	}
+
+end:
+	GLUE_DEC_REF_CNT(i4UserCnt);
 	return work_done;
 #else /* CFG_SUPPORT_RX_NAPI */
 	return 0;

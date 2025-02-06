@@ -1,54 +1,8 @@
-/*******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- ******************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  * Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/os/linux
  *     /gl_kal.c#10
@@ -96,6 +50,9 @@
 
 /* the maximum number of all possible file name */
 #define FILE_NAME_TOTAL 8
+
+/* mdns record base */
+#define RECORDKEY_BASE  0xFF
 
 /*******************************************************************************
  *                             D A T A   T Y P E S
@@ -671,8 +628,8 @@ void kalUpdateMACAddress(IN struct GLUE_INFO *prGlueInfo,
 
 	if (UNEQUAL_MAC_ADDR(prGlueInfo->prDevHandler->dev_addr,
 			     pucMacAddr))
-		memcpy(prGlueInfo->prDevHandler->dev_addr, pucMacAddr,
-		       PARAM_MAC_ADDR_LEN);
+		kal_eth_hw_addr_set(prGlueInfo->prDevHandler,
+			pucMacAddr);
 
 }
 
@@ -1132,10 +1089,14 @@ uint32_t kalRxIndicateOnePkt(IN struct GLUE_INFO
 	}
 #endif /* CFG_RX_NAPI_SUPPORT */
 
+#if KERNEL_VERSION(5, 18, 0) <= CFG80211_VERSION_CODE
+	netif_rx(prSkb);
+#else
 	if (!in_interrupt())
-		netif_rx_ni(prSkb);	/* only in non-interrupt context */
+		netif_rx_ni(prSkb);
 	else
 		netif_rx(prSkb);
+#endif
 
 	return WLAN_STATUS_SUCCESS;
 }
@@ -1307,7 +1268,7 @@ kalIndicateStatusAndComplete(IN struct GLUE_INFO
 			0, /* TSF */
 			WLAN_CAPABILITY_ESS,
 			prBssDesc->u2BeaconInterval, /* beacon interval */
-			prBssDesc->aucIEBuf, /* IE */
+			prBssDesc->pucIeBuf, /* IE */
 			prBssDesc->u2IELength, /* IE Length */
 			RCPI_TO_dBm(prBssDesc->ucRCPI) * 100, /* MBM */
 			GFP_KERNEL);
@@ -1319,7 +1280,7 @@ kalIndicateStatusAndComplete(IN struct GLUE_INFO
 			0, /* TSF */
 			WLAN_CAPABILITY_ESS,
 			prBssDesc->u2BeaconInterval, /* beacon interval */
-			prBssDesc->aucIEBuf, /* IE */
+			prBssDesc->pucIeBuf, /* IE */
 			prBssDesc->u2IELength, /* IE Length */
 			RCPI_TO_dBm(prBssDesc->ucRCPI) * 100, /* MBM */
 			GFP_KERNEL);
@@ -2808,6 +2769,7 @@ static int32_t kalThreadSchedRetrieve(struct task_struct *pThread,
 {
 #ifdef CONFIG_SCHEDSTATS
 	struct sched_entity se;
+	struct sched_statistics *stats;
 	unsigned long long sec;
 	unsigned long usec;
 
@@ -2822,11 +2784,18 @@ static int32_t kalThreadSchedRetrieve(struct task_struct *pThread,
 
 	memcpy(&se, &pThread->se, sizeof(struct sched_entity));
 	kalGetLocalTime(&sec, &usec);
+#if (KERNEL_VERSION(5, 16, 0) <= LINUX_VERSION_CODE) || \
+	((CFG_KERNEL_AN14_515 == 1) && \
+	KERNEL_VERSION(5, 15, 109) <= LINUX_VERSION_CODE)
+	stats = &pThread->stats;
+#else
+	stats = &pThread->se.statistics;
+#endif
 
 	pSched->time = sec*1000 + usec/1000;
 	pSched->exec = se.sum_exec_runtime;
-	pSched->runnable = se.statistics.wait_sum;
-	pSched->iowait = se.statistics.iowait_sum;
+	pSched->runnable = stats->wait_sum;
+	pSched->iowait = stats->iowait_sum;
 
 	return 0;
 #else
@@ -5860,11 +5829,13 @@ void kalIndicateRxAuthToUpperLayer(struct net_device *prDevHandler,
 	cfg80211AddToPktQueue(prDevHandler, prAuthFrame, u2FrameLen, NULL,
 				CFG80211_RX, MAC_FRAME_AUTH);
 #else
+	kalAcquireWDevMutex(prDevHandler);
 #if (KERNEL_VERSION(3, 11, 0) <= CFG80211_VERSION_CODE)
 	cfg80211_rx_mlme_mgmt(prDevHandler, prAuthFrame, u2FrameLen);
 #else
 	cfg80211_send_rx_auth(prDevHandler, prAuthFrame, u2FrameLen);
 #endif
+	kalReleaseWDevMutex(prDevHandler);
 #endif
 }
 
@@ -5872,6 +5843,28 @@ void kalIndicateRxAssocToUpperLayer(struct net_device *prDevHandler,
 			uint8_t *prAssocRspFrame, struct cfg80211_bss *bss,
 			uint16_t u2FrameLen)
 {
+#if (KERNEL_VERSION(5, 1, 0) <= CFG80211_VERSION_CODE)
+#if (CFG_SUPPORT_CFG80211_QUEUE != 1)
+#if (CFG_ADVANCED_80211_MLO == 1) || \
+	KERNEL_VERSION(6, 0, 0) <= CFG80211_VERSION_CODE
+	struct cfg80211_rx_assoc_resp rx_assoc_resp_data = {0};
+#endif
+#endif
+	struct GLUE_INFO *prGlueInfo = NULL;
+	struct BSS_INFO *prBssInfo = NULL;
+	uint8_t ucBssIdx = 0;
+
+	prGlueInfo = (prDevHandler != NULL) ?
+		*((struct GLUE_INFO **) netdev_priv(prDevHandler)) : NULL;
+
+	if (!prGlueInfo) {
+		DBGLOG(RX, WARN, "prGlueInfo == NULL unexpected\n");
+		return;
+	}
+	ucBssIdx = wlanGetBssIdxByNetInterface(prGlueInfo, prDevHandler);
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prGlueInfo->prAdapter, ucBssIdx);
+
+#endif
 	DBGLOG(REQ, INFO, "\n");
 
 #if CFG_SUPPORT_CFG80211_QUEUE
@@ -5880,9 +5873,37 @@ void kalIndicateRxAssocToUpperLayer(struct net_device *prDevHandler,
 			u2FrameLen, bss, CFG80211_RX,
 			MAC_FRAME_ASSOC_RSP);
 #else
-#if (KERNEL_VERSION(5, 1, 0) <= CFG80211_VERSION_CODE)
-	cfg80211_rx_assoc_resp(prDevHandler, bss, prAssocRspFrame,
-		u2FrameLen, 0, NULL, 0);
+	kalAcquireWDevMutex(prDevHandler);
+
+#if (CFG_ADVANCED_80211_MLO == 1) || \
+	KERNEL_VERSION(6, 0, 0) <= CFG80211_VERSION_CODE
+		rx_assoc_resp_data.buf = prAssocRspFrame;
+		rx_assoc_resp_data.len = u2FrameLen;
+		rx_assoc_resp_data.uapsd_queues = 0;
+		rx_assoc_resp_data.links[0].bss = bss;
+#if (KERNEL_VERSION(6, 2, 0) <= CFG80211_VERSION_CODE)
+		rx_assoc_resp_data.links[0].status = WLAN_STATUS_SUCCESS;
+#endif
+		if (prBssInfo && prBssInfo->eNetworkType == NETWORK_TYPE_AIS) {
+			rx_assoc_resp_data.req_ies = prGlueInfo->aucReqIe;
+			rx_assoc_resp_data.req_ies_len =
+				prGlueInfo->u4ReqIeLength;
+			cfg80211_rx_assoc_resp(prCfg80211Req->prDevHandler,
+				&rx_assoc_resp_data);
+		} else {
+			rx_assoc_resp_data.req_ies = NULL;
+			rx_assoc_resp_data.req_ies_len = 0;
+			cfg80211_rx_assoc_resp(prCfg80211Req->prDevHandler,
+				&rx_assoc_resp_data);
+		}
+#elif (KERNEL_VERSION(5, 1, 0) <= CFG80211_VERSION_CODE)
+	if (prBssInfo && prBssInfo->eNetworkType == NETWORK_TYPE_AIS)
+		cfg80211_rx_assoc_resp(prDevHandler, bss, prAssocRspFrame,
+			u2FrameLen, 0, prGlueInfo->aucReqIe,
+			prGlueInfo->u4ReqIeLength);
+	else
+		cfg80211_rx_assoc_resp(prDevHandler, bss, prAssocRspFrame,
+			u2FrameLen, 0, NULL, 0);
 #elif (KERNEL_VERSION(3, 18, 0) <= CFG80211_VERSION_CODE)
 	/* [TODO] Set uapsd_queues field to zero first,fill it if needed*/
 	cfg80211_rx_assoc_resp(prDevHandler, bss, prAssocRspFrame, u2FrameLen, 0);
@@ -5891,6 +5912,7 @@ void kalIndicateRxAssocToUpperLayer(struct net_device *prDevHandler,
 #else
 	cfg80211_send_rx_assoc(prDevHandler, bss, prAssocRspFrame, u2FrameLen);
 #endif
+	kalReleaseWDevMutex(prDevHandler);
 #endif
 }
 
@@ -5908,11 +5930,13 @@ void kalIndicateRxDeauthToUpperLayer(struct net_device *prDevHandler,
 			CFG80211_RX,
 			MAC_FRAME_DEAUTH);
 #else
+	kalAcquireWDevMutex(prDevHandler);
 #if (KERNEL_VERSION(3, 11, 0) <= CFG80211_VERSION_CODE)
 	cfg80211_rx_mlme_mgmt(prDevHandler, prDeauthFrame, u2FrameLen);
 #else
 	cfg80211_send_deauth(prDevHandler, prDeauthFrame, u2FrameLen);
 #endif
+	kalReleaseWDevMutex(prDevHandler);
 #endif
 }
 
@@ -5930,11 +5954,13 @@ void kalIndicateRxDisassocToUpperLayer(struct net_device *prDevHandler,
 			CFG80211_RX,
 			MAC_FRAME_DISASSOC);
 #else
+	kalAcquireWDevMutex(prDevHandler);
 #if (KERNEL_VERSION(3, 11, 0) <= CFG80211_VERSION_CODE)
 	cfg80211_rx_mlme_mgmt(prDevHandler, prDisassocFrame, u2FrameLen);
 #else
 	cfg80211_send_disassoc(prDevHandler, prDisassocFrame, u2FrameLen);
 #endif
+	kalReleaseWDevMutex(prDevHandler);
 #endif
 }
 
@@ -5951,6 +5977,7 @@ void kalIndicateTxDeauthToUpperLayer(struct net_device *prDevHandler,
 			CFG80211_TX,
 			MAC_FRAME_DEAUTH);
 #else
+	kalAcquireWDevMutex(prDevHandler);
 #if KERNEL_VERSION(5, 11, 0) <= CFG80211_VERSION_CODE
 		/* TODO: need quick reconnect here? */
 		cfg80211_tx_mlme_mgmt(prDevHandler, prDeauthFrame,
@@ -5960,6 +5987,7 @@ void kalIndicateTxDeauthToUpperLayer(struct net_device *prDevHandler,
 #else
 		cfg80211_send_deauth(prDevHandler, prDeauthFrame, u2FrameLen);
 #endif
+	kalReleaseWDevMutex(prDevHandler);
 #endif
 }
 
@@ -5976,15 +6004,47 @@ void kalIndicateTxDisassocToUpperLayer(struct net_device *prDevHandler,
 			CFG80211_TX,
 			MAC_FRAME_DISASSOC);
 #else
+	kalAcquireWDevMutex(prDevHandler);
 #if (KERNEL_VERSION(3, 11, 0) <= CFG80211_VERSION_CODE)
 	cfg80211_tx_mlme_mgmt(prDevHandler, prDisassocFrame, u2FrameLen);
 #else
 	cfg80211_send_disassoc(prDevHandler, prDisassocFrame, u2FrameLen);
 #endif
+	kalReleaseWDevMutex(prDevHandler);
 #endif
 }
 
-#if CFG_SUPPORT_CFG80211_QUEUE
+u_int8_t kalValidateDevHandler(IN struct GLUE_INFO *prGlueInfo,
+				IN struct net_device *pDev)
+{
+	u_int8_t ret = FALSE;
+	uint32_t u4Idx = 0;
+	struct GL_P2P_INFO *prP2pInfo = NULL;
+
+	if (prGlueInfo == NULL) {
+		DBGLOG(REQ, ERROR, "prGlueInfo == NULL unexpected\n");
+	} else if (pDev == NULL) {
+		DBGLOG(REQ, ERROR, "pDev == NULL unexpected\n");
+	} else if (prGlueInfo->u4ReadyFlag == 0) {
+		DBGLOG(REQ, INFO, "wlan removed, all net device need stop\n");
+	} else if (prGlueInfo->prDevHandler == pDev) {
+		ret = TRUE;
+	} else {
+		for (u4Idx = 0; u4Idx < KAL_P2P_NUM; u4Idx++) {
+			prP2pInfo = prGlueInfo->prP2PInfo[u4Idx];
+			if ((prP2pInfo != NULL)
+				&& (prP2pInfo->aprRoleHandler == pDev
+					|| prP2pInfo->prDevHandler == pDev))
+				ret = TRUE;
+		}
+	}
+
+	if ((ret == TRUE) && (pDev->reg_state != NETREG_REGISTERED))
+		ret = FALSE;
+
+	return ret;
+}
+
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief This function is provided by GLUE Layer for internal driver stack to
@@ -6022,6 +6082,8 @@ void kalReleaseWDevMutex(IN struct net_device *pDev)
 	DBGLOG(INIT, TEMP, "WDEV_UNLOCK\n");
 }				/* end of kalReleaseWDevMutex() */
 
+#if CFG_SUPPORT_CFG80211_QUEUE
+
 void cfg80211AddToPktQueue(struct net_device *prDevHandler, void *buf,
 			uint16_t u2FrameLength, struct cfg80211_bss *bss,
 			uint8_t ucflagTx, uint8_t ucFrameType)
@@ -6052,6 +6114,10 @@ void cfg80211AddToPktQueue(struct net_device *prDevHandler, void *buf,
 
 	prCfg80211Req->prDevHandler = prDevHandler;
 	prCfg80211Req->prFrame = kalMemAlloc(u2FrameLength, PHY_MEM_TYPE);
+	if (prCfg80211Req->prFrame == NULL) {
+		DBGLOG(REQ, ERROR, "Cfg80211Req->Frame Alloc Failed\n");
+	goto FRAME_ALLOC_ERROR;
+	}
 	kalMemCopy((void *) prCfg80211Req->prFrame,
 				(void *) buf,
 				u2FrameLength);
@@ -6060,6 +6126,13 @@ void cfg80211AddToPktQueue(struct net_device *prDevHandler, void *buf,
 	prCfg80211Req->ucFlagTx = ucflagTx;
 	prCfg80211Req->ucFrameType = ucFrameType;
 
+	KAL_ACQUIRE_MUTEX(prGlueInfo->prAdapter, MUTEX_DEL_INF);
+	if (!kalValidateDevHandler(prGlueInfo, prCfg80211Req->prDevHandler)) {
+		KAL_RELEASE_MUTEX(prGlueInfo->prAdapter, MUTEX_DEL_INF);
+		DBGLOG(REQ, ERROR,
+			"net_device in cfg80211Req has been unregistered\n");
+		goto HANDLE_ERROR;
+	}
 	GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_CFG80211_QUE);
 	QUEUE_INSERT_TAIL(&prGlueInfo->prAdapter->rCfg80211Queue,
 				&prCfg80211Req->rQueEntry);
@@ -6067,6 +6140,17 @@ void cfg80211AddToPktQueue(struct net_device *prDevHandler, void *buf,
 
 	if (!schedule_delayed_work(&cfg80211_workq, 0))
 		DBGLOG(REQ, INFO, "work is already in cfg80211_workq\n");
+	KAL_RELEASE_MUTEX(prGlueInfo->prAdapter, MUTEX_DEL_INF);
+
+	return;
+
+HANDLE_ERROR:
+	/* free prCfg80211Req->prFrame */
+	kalMemFree(prCfg80211Req->prFrame, PHY_MEM_TYPE, u2FrameLength);
+FRAME_ALLOC_ERROR:
+	/* free prCfg80211Req */
+	kalMemFree(prCfg80211Req, PHY_MEM_TYPE,
+		sizeof(struct PARAM_CFG80211_REQ));
 }
 
 static void kalProcessCfg80211TxPkt(struct PARAM_CFG80211_REQ *prCfg80211Req)
@@ -6117,6 +6201,28 @@ static void kalProcessCfg80211TxPkt(struct PARAM_CFG80211_REQ *prCfg80211Req)
 
 static void kalProcessCfg80211RxPkt(struct PARAM_CFG80211_REQ *prCfg80211Req)
 {
+#if (KERNEL_VERSION(5, 1, 0) <= CFG80211_VERSION_CODE)
+#if (CFG_ADVANCED_80211_MLO == 1) || \
+	KERNEL_VERSION(6, 0, 0) <= CFG80211_VERSION_CODE
+	struct cfg80211_rx_assoc_resp rx_assoc_resp_data = {0};
+#endif
+	struct GLUE_INFO *prGlueInfo = NULL;
+	struct BSS_INFO *prBssInfo = NULL;
+	uint8_t ucBssIdx = 0;
+
+	prGlueInfo = (prCfg80211Req->prDevHandler != NULL) ?
+		*((struct GLUE_INFO **)
+		netdev_priv(prCfg80211Req->prDevHandler)) : NULL;
+	if (!prGlueInfo) {
+		DBGLOG(RX, WARN, "prGlueInfo == NULL unexpected\n");
+		return;
+	}
+	ucBssIdx = wlanGetBssIdxByNetInterface(prGlueInfo,
+		prCfg80211Req->prDevHandler);
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prGlueInfo->prAdapter, ucBssIdx);
+
+#endif
+
 	ASSERT(prCfg80211Req);
 
 	DBGLOG(REQ, INFO, "\n");
@@ -6150,12 +6256,41 @@ static void kalProcessCfg80211RxPkt(struct PARAM_CFG80211_REQ *prCfg80211Req)
 		break;
 #endif
 	case MAC_FRAME_ASSOC_RSP:
-#if (KERNEL_VERSION(5, 1, 0) <= CFG80211_VERSION_CODE)
+#if (CFG_ADVANCED_80211_MLO == 1) || \
+	KERNEL_VERSION(6, 0, 0) <= CFG80211_VERSION_CODE
+		rx_assoc_resp_data.buf = (const u8 *)prCfg80211Req->prFrame;
+		rx_assoc_resp_data.len = prCfg80211Req->frameLen;
+		rx_assoc_resp_data.uapsd_queues = 0;
+		rx_assoc_resp_data.links[0].bss = prCfg80211Req->bss;
+#if (KERNEL_VERSION(6, 2, 0) <= CFG80211_VERSION_CODE)
+		rx_assoc_resp_data.links[0].status = WLAN_STATUS_SUCCESS;
+#endif
+		if (prBssInfo && prBssInfo->eNetworkType == NETWORK_TYPE_AIS) {
+			rx_assoc_resp_data.req_ies = prGlueInfo->aucReqIe;
+			rx_assoc_resp_data.req_ies_len =
+				prGlueInfo->u4ReqIeLength;
+			cfg80211_rx_assoc_resp(prCfg80211Req->prDevHandler,
+				&rx_assoc_resp_data);
+		} else {
+			rx_assoc_resp_data.req_ies = NULL;
+			rx_assoc_resp_data.req_ies_len = 0;
+			cfg80211_rx_assoc_resp(prCfg80211Req->prDevHandler,
+				&rx_assoc_resp_data);
+		}
+#elif (KERNEL_VERSION(5, 1, 0) <= CFG80211_VERSION_CODE)
 		/* [TODO] Set uapsd_queues/req_ies/req_ies_len properly */
-		cfg80211_rx_assoc_resp(prCfg80211Req->prDevHandler,
-			prCfg80211Req->bss,
-			(const u8 *)prCfg80211Req->prFrame,
-			prCfg80211Req->frameLen, 0, NULL, 0);
+		if (prBssInfo && prBssInfo->eNetworkType == NETWORK_TYPE_AIS)
+			cfg80211_rx_assoc_resp(prCfg80211Req->prDevHandler,
+				prCfg80211Req->bss,
+				(const u8 *)prCfg80211Req->prFrame,
+				prCfg80211Req->frameLen, 0,
+				prGlueInfo->aucReqIe,
+				prGlueInfo->u4ReqIeLength);
+		else
+			cfg80211_rx_assoc_resp(prCfg80211Req->prDevHandler,
+				prCfg80211Req->bss,
+				(const u8 *)prCfg80211Req->prFrame,
+				prCfg80211Req->frameLen, 0, NULL, 0);
 #elif (KERNEL_VERSION(3, 18, 0) <= CFG80211_VERSION_CODE)
 		cfg80211_rx_assoc_resp(prCfg80211Req->prDevHandler,
 			prCfg80211Req->bss,
@@ -6184,10 +6319,12 @@ static void kalProcessCfg80211RxPkt(struct PARAM_CFG80211_REQ *prCfg80211Req)
 void wlanSchedCfg80211WorkQueue(struct work_struct *work)
 {
 	struct GLUE_INFO *prGlueInfo = NULL;
+	struct ADAPTER *prAdapter = NULL;
 	struct net_device *prDev = gPrDev;
 	struct PARAM_CFG80211_REQ *prCfg80211Req = NULL;
 	struct QUE rTempQue;
 	struct QUE *prTempQue = &rTempQue;
+	struct BSS_INFO *prP2pBssInfo = (struct BSS_INFO *) NULL;
 
 	GLUE_SPIN_LOCK_DECLARATION();
 
@@ -6198,6 +6335,12 @@ void wlanSchedCfg80211WorkQueue(struct work_struct *work)
 					 netdev_priv(prDev)) : NULL;
 	if (!prGlueInfo) {
 		DBGLOG(SCN, INFO, "prGlueInfo == NULL unexpected\n");
+		return;
+	}
+
+	prAdapter = prGlueInfo->prAdapter;
+	if (!prAdapter) {
+		DBGLOG(SCN, INFO, "prAdapter == NULL unexpected\n");
 		return;
 	}
 
@@ -6228,9 +6371,24 @@ void wlanSchedCfg80211WorkQueue(struct work_struct *work)
 						prCfg80211Req->ucFrameType,
 						prCfg80211Req->frameLen);
 					kalProcessCfg80211RxPkt(prCfg80211Req);
+				} else if (prCfg80211Req->ucFlagTx
+						== CFG80211_EVENT) {
+					DBGLOG(REQ, INFO,
+					"cfg80211_event %d\n",
+						prCfg80211Req->ucBssIndex);
+					prP2pBssInfo =
+					GET_BSS_INFO_BY_INDEX(prAdapter,
+						prCfg80211Req->ucBssIndex);
+					kalP2pIndicateChnlSwitch(prAdapter,
+					prP2pBssInfo);
 				}
 			} else {
 				DBGLOG(REQ, ERROR, "Adapter is not ready\n");
+			}
+
+			if (prCfg80211Req->ucFlagTx == REG_SET) {
+				mtk_reg_notify(priv_to_wiphy(prGlueInfo),
+						&prCfg80211Req->request);
 			}
 
 			DBGLOG(REQ, TRACE,
@@ -6976,8 +7134,7 @@ void kalWowProcess(IN struct GLUE_INFO *prGlueInfo,
 
 #if CFG_SUPPORT_MDNS_OFFLOAD
 	if (enable && prGlueInfo->prAdapter->mdns_offload_enable) {
-		kalSendClearRecordToFw(prGlueInfo);
-		kalSendMdnsRecordToFw(prGlueInfo);
+		kalSendMdnsFlagsToFw(prGlueInfo);
 	}
 #endif
 
@@ -7080,7 +7237,13 @@ void kalWowProcess(IN struct GLUE_INFO *prGlueInfo,
 	if (enable == 1) {
 		rCmdWowlanParam.ucCmd = PM_WOWLAN_REQ_START;
 		if (!prGlueInfo->prAdapter->rWifiVar.ucMobileLikeSuspend) {
+#if (CFG_SUPPORT_WAKE_ON_PNO != 1)
 			rCmdWowlanParam.ucDetectType = WOWLAN_DETECT_TYPE_MAGIC;
+#else
+			rCmdWowlanParam.ucDetectType =
+					WOWLAN_DETECT_TYPE_MAGIC |
+					WOWLAN_DETECT_TYPE_PNO_MATCH_SSID;
+#endif
 			rCmdWowlanParam.u2FilterFlag = WOWLAN_FF_DROP_ALL |
 					       WOWLAN_FF_SEND_MAGIC_TO_HOST |
 					       WOWLAN_FF_ALLOW_1X |
@@ -7138,17 +7301,16 @@ void kalWowProcess(IN struct GLUE_INFO *prGlueInfo,
 	}
 
 	/* ARP offload. move to last command */
+	prGlueInfo->fgIsInSuspendMode = enable;
 	wlanSetSuspendMode(prGlueInfo, enable);
 	/* skip in set_suspend_mode command and move to here */
 	if (prGlueInfo->prAdapter->rWifiVar.ucDisSuspendScrOff) {
 		DBGLOG(INIT, INFO,
 			"Set suspend mode [%u]\n",
 			enable);
-		prGlueInfo->fgIsInSuspendMode = enable;
 		p2pSetSuspendMode(prGlueInfo, enable);
 	}
 
-	wlanSendDummyCmd(prGlueInfo->prAdapter, TRUE);
 
 }
 
@@ -7157,18 +7319,62 @@ void kalMdnsOffloadInit(IN struct ADAPTER *prAdapter)
 {
 	struct MDNS_INFO_T *prMdnsInfo;
 	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
-	uint8_t i;
+	struct MDNS_PASSTHROUGH_ENTRY_T *prMdnsPassthroughEntry;
+	struct MDNS_SETTING_FLAGS_T *prMdnsSaveFlags;
+	uint8_t i = 0;
+	uint8_t j = 0;
 
 	prMdnsInfo = &prAdapter->rMdnsInfo;
+	prMdnsSaveFlags = &prAdapter->rMdnsInfo.rMdnsSaveFlags;
+	prMdnsInfo->rMdnsRecordCout = 0;
+	prMdnsInfo->rMdnsPassthroughCout = 0;
 	LINK_INITIALIZE(&prMdnsInfo->rMdnsRecordFreeList);
 	LINK_INITIALIZE(&prMdnsInfo->rMdnsRecordList);
+	LINK_INITIALIZE(&prMdnsInfo->rMdnsPassthroughFreeList);
+	LINK_INITIALIZE(&prMdnsInfo->rMdnsPassthroughList);
 
+	/* init rMdnsRecordFreeList */
 	for (i = 0; i < MAX_MDNS_CACHE_NUM; i++) {
 		prMdnsParamEntry = (struct MDNS_PARAM_ENTRY_T *)
 				(&prMdnsInfo->rMdnsEntry[i]);
+		prMdnsParamEntry->recordKey = (RECORDKEY_BASE - i)
+						& RECORDKEY_BASE;
 		LINK_INSERT_TAIL(&prMdnsInfo->rMdnsRecordFreeList,
 			&prMdnsParamEntry->rLinkEntry);
 	}
+
+	/* init rMdnsPassthroughFreeList */
+	for (i = 0; i < MAX_MDNS_PASSTHTOUGH_NUM; i++) {
+		prMdnsPassthroughEntry = (struct MDNS_PASSTHROUGH_ENTRY_T *)
+				(&prMdnsInfo->rMdnsPassthroughEntry[i]);
+		LINK_INSERT_TAIL(&prMdnsInfo->rMdnsPassthroughFreeList,
+			&prMdnsPassthroughEntry->rLinkEntry);
+	}
+
+	/* init mdns saved flags for update before suspend*/
+	prMdnsSaveFlags->ucPassthroughBehavior = MDNS_PASSTHROUGH_FORWARD_ALL;
+	prMdnsSaveFlags->ucIPV6WakeupFlag = 0;
+
+	/* init the new fields */
+	prMdnsInfo->dataBlock.index = 0;
+	prMdnsInfo->passrthrough.count = 0;
+	prMdnsInfo->currentIndex = 0;
+
+	/* Initialize indices */
+	for (i = 0; i < MAX_MDNS_CACHE_NUM; i++) {
+		prMdnsInfo->rMdnsRecordIndices[i].type = 0;
+		prMdnsInfo->rMdnsRecordIndices[i].responseIndex = 0;
+		for (j = 0; j < 4; j++)
+			prMdnsInfo->rMdnsRecordIndices[i].nameIndex[j] = 0;
+	}
+
+	/* Initialize passrthrough */
+	for (i = 0; i < MAX_MDNS_PASSTHTOUGH_NUM; i++)
+		prMdnsInfo->passrthrough.nameIndices[i] = 0;
+
+	/* Initialize dataBlock */
+	kalMemZero(prMdnsInfo->dataBlock.data,
+		sizeof(uint8_t)*MAX_MDNS_USE_SIZE);
 }
 
 struct MDNS_PARAM_ENTRY_T *mdnsAllocateParamEntry(IN struct ADAPTER *prAdapter)
@@ -7178,28 +7384,65 @@ struct MDNS_PARAM_ENTRY_T *mdnsAllocateParamEntry(IN struct ADAPTER *prAdapter)
 	struct LINK *prMdnsRecordFreeList;
 	struct LINK *prMdnsRecordList;
 
-	ASSERT(prAdapter);
+	if (!prAdapter) {
+		DBGLOG(NIC, ERROR, "NULL prAdapter!\n");
+		return NULL;
+	}
 
 	prMdnsInfo = &prAdapter->rMdnsInfo;
 
 	prMdnsRecordFreeList = &prMdnsInfo->rMdnsRecordFreeList;
-	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
 
 	LINK_REMOVE_HEAD(prMdnsRecordFreeList, prMdnsParamEntry,
 			struct MDNS_PARAM_ENTRY_T *);
 
-	if (!prMdnsParamEntry) {
-		DBGLOG(REQ, INFO,
-			"mdns record buffer is full replace the first one.\n");
-		LINK_REMOVE_HEAD(prMdnsRecordList, prMdnsParamEntry,
-					struct MDNS_PARAM_ENTRY_T *);
+	if (prMdnsParamEntry) {
+		kalMemZero(&prMdnsParamEntry->mdns_param,
+				sizeof(struct MDNS_PARAM_T));
+		kalMemZero(&prMdnsParamEntry->rLinkEntry,
+				sizeof(struct LINK_ENTRY));
+
+		prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
+
+		LINK_INSERT_TAIL(prMdnsRecordList,
+				&prMdnsParamEntry->rLinkEntry);
 	}
 
-	if (prMdnsParamEntry)
-		kalMemZero(prMdnsParamEntry,
-				sizeof(struct MDNS_PARAM_ENTRY_T));
-
 	return prMdnsParamEntry;
+}
+
+struct MDNS_PASSTHROUGH_ENTRY_T *mdnsAllocatePassthroughEntry(
+	IN struct ADAPTER *prAdapter)
+{
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PASSTHROUGH_ENTRY_T *prMdnsPassthroughEntry;
+	struct LINK *rMdnsPassthroughFreeList;
+	struct LINK *rMdnsPassthroughList;
+
+	if (!prAdapter) {
+		DBGLOG(NIC, ERROR, "NULL prAdapter!\n");
+		return NULL;
+	}
+
+	prMdnsInfo = &prAdapter->rMdnsInfo;
+	rMdnsPassthroughFreeList = &prMdnsInfo->rMdnsPassthroughFreeList;
+
+	LINK_REMOVE_HEAD(rMdnsPassthroughFreeList, prMdnsPassthroughEntry,
+			struct MDNS_PASSTHROUGH_ENTRY_T *);
+
+	if (prMdnsPassthroughEntry) {
+		kalMemZero(&prMdnsPassthroughEntry->mdns_passthrough,
+				sizeof(struct MDNS_PASSTHROUGHLIST_T));
+		kalMemZero(&prMdnsPassthroughEntry->rLinkEntry,
+				sizeof(struct LINK_ENTRY));
+
+		rMdnsPassthroughList = &prMdnsInfo->rMdnsPassthroughList;
+
+		LINK_INSERT_TAIL(rMdnsPassthroughList,
+				&prMdnsPassthroughEntry->rLinkEntry);
+	}
+
+	return prMdnsPassthroughEntry;
 }
 
 void kalSendMdnsEnableToFw(struct GLUE_INFO *prGlueInfo)
@@ -7295,36 +7538,283 @@ void kalSendMdnsEnableToFw(struct GLUE_INFO *prGlueInfo)
 		sizeof(struct CMD_MDNS_PARAM_T));
 }
 
-void kalAddMdnsRecord(struct GLUE_INFO *prGlueInfo,
+uint32_t kalAddMdnsRecord(struct GLUE_INFO *prGlueInfo,
 		struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo)
 {
 	struct MDNS_INFO_T *prMdnsInfo;
 	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
 	struct LINK *prMdnsRecordList;
+	uint16_t u2MdnsUsedSize = 0;
+	uint16_t u2MaxAvailMdnsSize = 0;
+	uint16_t u2UplRecordSize = 0;
+
+	if (prGlueInfo == NULL || prMdnsUplayerInfo == NULL) {
+		DBGLOG(REQ, ERROR,
+			"prGlueInfo or prMdnsUplayerInfo is null.\n");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	u2UplRecordSize = kalGetMdnsUplRecSz(prMdnsUplayerInfo);
+	u2MdnsUsedSize = kalGetMdnsUsedSize(prGlueInfo);
+	u2MaxAvailMdnsSize = kalGetMaxAvailMdnsSize();
+
+	if (u2UplRecordSize + u2MdnsUsedSize > u2MaxAvailMdnsSize) {
+		DBGLOG(REQ, ERROR, "mdns add record fail, no enough space\n");
+		return WLAN_STATUS_FAILURE;
+	}
 
 	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
 	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
 
-	LINK_FOR_EACH_ENTRY(prMdnsParamEntry, prMdnsRecordList,
-				rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
-		if (kalMemCmp(&prMdnsParamEntry->mdns_param,
-				&prMdnsUplayerInfo->mdns_param,
-				sizeof(struct MDNS_PARAM_T)) == 0) {
-			DBGLOG(REQ, ERROR, "mdns record is in the buffer.\n");
-			return;
-		}
-	}
-
 	prMdnsParamEntry = mdnsAllocateParamEntry(prGlueInfo->prAdapter);
-	if (prMdnsParamEntry) {
+	if (prMdnsParamEntry == NULL) {
+		DBGLOG(REQ, INFO,
+			"mdns record buffer is full, add record failed.\n");
+		return WLAN_STATUS_FAILURE;
+	} else {
+		DBGLOG(REQ, INFO, "add mdns record buffer number %u.\n",
+				prMdnsRecordList->u4NumElem);
 		kalMemCopy(&prMdnsParamEntry->mdns_param,
 				&prMdnsUplayerInfo->mdns_param,
 				sizeof(struct MDNS_PARAM_T));
-		LINK_INSERT_TAIL(prMdnsRecordList,
-				&prMdnsParamEntry->rLinkEntry);
-	} else {
-		DBGLOG(REQ, ERROR, "alloc mdns record failed.\n");
+		prMdnsInfo->rMdnsRecordCout += 1;
+		return prMdnsParamEntry->recordKey;
 	}
+}
+
+uint32_t kalAddMdnsPassthrough(struct GLUE_INFO *prGlueInfo,
+		struct MDNS_INFO_UPLAYER_T *prMdnsUplayerPassthroughInfo)
+{
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PASSTHROUGH_ENTRY_T *prMdnsPassthroughEntry;
+	struct LINK *rMdnsPassthroughList;
+	int length = 0;
+	uint16_t u2MdnsUsedSize = 0;
+	uint16_t u2MaxAvailMdnsSize = 0;
+	uint16_t u2UplPasstSize = 0;
+
+	if (prGlueInfo == NULL || prMdnsUplayerPassthroughInfo == NULL) {
+		DBGLOG(REQ, ERROR,
+			"prGlueInfo or prMdnsUplayerPassthroughInfo is null.\n");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	u2UplPasstSize = kalGetMdnsUplPTSz(prMdnsUplayerPassthroughInfo);
+	u2MdnsUsedSize = kalGetMdnsUsedSize(prGlueInfo);
+	u2MaxAvailMdnsSize = kalGetMaxAvailMdnsSize();
+
+	if (u2UplPasstSize + u2MdnsUsedSize > u2MaxAvailMdnsSize) {
+		DBGLOG(REQ, ERROR, "mdns add passthrough fail, no space\n");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	rMdnsPassthroughList = &prMdnsInfo->rMdnsPassthroughList;
+
+	LINK_FOR_EACH_ENTRY(prMdnsPassthroughEntry, rMdnsPassthroughList,
+				rLinkEntry, struct MDNS_PASSTHROUGH_ENTRY_T) {
+		if (kalMemCmp(&prMdnsPassthroughEntry->mdns_passthrough.name,
+				&prMdnsUplayerPassthroughInfo->name,
+				strlen((const char *)
+				prMdnsPassthroughEntry->mdns_passthrough.name)
+				+ 1) == 0) {
+			DBGLOG(REQ, ERROR,
+				"mdns passthrough is in the buffer.\n");
+			return WLAN_STATUS_FAILURE;
+		}
+	}
+
+	prMdnsPassthroughEntry =
+		mdnsAllocatePassthroughEntry(prGlueInfo->prAdapter);
+	if (prMdnsPassthroughEntry == NULL) {
+		DBGLOG(REQ, INFO,
+			"mdns passthrough buffer is full, add failed.\n");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	DBGLOG(REQ, INFO,
+		"add mdns passthrough buffer number %u.\n",
+			rMdnsPassthroughList->u4NumElem);
+	length = strlen((const char *)
+			prMdnsUplayerPassthroughInfo->name) + 1;
+
+	kalMemCopy(&prMdnsPassthroughEntry->mdns_passthrough.name,
+			&prMdnsUplayerPassthroughInfo->name,
+			length);
+	prMdnsPassthroughEntry->mdns_passthrough.u2PassthroghLength
+		= length;
+	prMdnsInfo->rMdnsPassthroughCout += 1;
+	return WLAN_STATUS_SUCCESS;
+
+}
+
+uint16_t kalGetMdnsUsedSize(struct GLUE_INFO *prGlueInfo)
+{
+	struct MDNS_INFO_T *prMdnsInfo;
+	uint16_t length = 0;
+	uint16_t count = 0;
+
+	/* passthrough */
+	struct MDNS_PASSTHROUGH_ENTRY_T *prMdnsPassthroughEntry;
+	struct LINK *prMdnsPassthroughList;
+
+	/* record */
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
+	struct LINK *prMdnsRecordList;
+
+	struct MDNS_PARAM_T *pMdnsParam = NULL;
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+
+	prMdnsPassthroughList = &prMdnsInfo->rMdnsPassthroughList;
+	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
+
+	/*count mdns record used size*/
+	LINK_FOR_EACH_ENTRY(prMdnsParamEntry, prMdnsRecordList,
+			rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
+
+		pMdnsParam = &prMdnsParamEntry->mdns_param;
+
+			/* query_ptr */
+		if (pMdnsParam->query_ptr.name_length > 0) {
+			length =
+				pMdnsParam->query_ptr.name_length + 2;
+			count += length;
+			if (count > MAX_MDNS_USE_SIZE)
+				goto exit;
+		}
+
+		/* query_srv */
+		if (pMdnsParam->query_srv.name_length > 0) {
+			length =
+				pMdnsParam->query_srv.name_length + 2;
+			count += length;
+			if (count > MAX_MDNS_USE_SIZE)
+				goto exit;
+		}
+
+		/* query_txt */
+		if (pMdnsParam->query_txt.name_length > 0) {
+			length =
+				pMdnsParam->query_txt.name_length + 2;
+			count += length;
+			if (count > MAX_MDNS_USE_SIZE)
+				goto exit;
+		}
+
+		/* query_a */
+		if (pMdnsParam->query_a.name_length > 0) {
+			length =
+				pMdnsParam->query_a.name_length + 2;
+			count += length;
+			if (count > MAX_MDNS_USE_SIZE)
+				goto exit;
+		}
+
+		/* response */
+		if (pMdnsParam->response_len > 0) {
+			length =
+				pMdnsParam->response_len + 2;
+			count += length;
+			if (count > MAX_MDNS_USE_SIZE)
+				goto exit;
+		}
+
+	} /* end of  LINK_FOR_EACH_ENTRY record */
+
+		/*add mdns passthrough used size*/
+	LINK_FOR_EACH_ENTRY(prMdnsPassthroughEntry, prMdnsPassthroughList,
+			rLinkEntry, struct MDNS_PASSTHROUGH_ENTRY_T) {
+
+		length = (prMdnsPassthroughEntry->
+			mdns_passthrough.u2PassthroghLength + 2);
+		count += length;
+		if (count > MAX_MDNS_USE_SIZE)
+			goto exit;
+
+	} /* end of  LINK_FOR_EACH_ENTRY passthrough  */
+
+exit:
+	DBGLOG(REQ, ERROR, "mdns used size %d .\n", count);
+	if (count > MAX_MDNS_USE_SIZE)
+		DBGLOG(REQ, ERROR,
+			"mdns used OVER size %d > %d: [MAX_MDNS_USE_SIZE].\n",
+			count, MAX_MDNS_USE_SIZE);
+	return count;
+
+}
+
+uint16_t kalGetMaxAvailMdnsSize(void)
+{
+	return MAX_MDNS_USE_SIZE
+		- MAX_MDNS_CACHE_NUM * sizeof(struct MDNS_RECORD_T)
+		- sizeof(struct MDNS_PASSTHROUGH_T)
+		- sizeof(uint16_t) * 3;
+}
+
+uint16_t kalGetMdnsUplRecSz(struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo)
+{
+	struct MDNS_PARAM_T *pMdnsParam = NULL;
+	uint16_t count = 0;
+	uint16_t length = 0;
+
+	if (prMdnsUplayerInfo == NULL) {
+		DBGLOG(REQ, ERROR,
+			"prGlueInfo or prMdnsUplayerInfo is null.\n");
+		return MAX_MDNS_USE_SIZE;
+	}
+
+	pMdnsParam = &prMdnsUplayerInfo->mdns_param;
+
+	/* query_ptr */
+	if (pMdnsParam->query_ptr.name_length > 0) {
+		length =
+			pMdnsParam->query_ptr.name_length + 2;
+		count += length;
+	}
+
+	/* query_srv */
+	if (pMdnsParam->query_srv.name_length > 0) {
+		length =
+			pMdnsParam->query_srv.name_length + 2;
+		count += length;
+	}
+
+	/* query_txt */
+	if (pMdnsParam->query_txt.name_length > 0) {
+		length =
+			pMdnsParam->query_txt.name_length + 2;
+		count += length;
+	}
+
+	/* query_a */
+	if (pMdnsParam->query_a.name_length > 0) {
+		length =
+			pMdnsParam->query_a.name_length + 2;
+		count += length;
+	}
+
+	/* response */
+	if (pMdnsParam->response_len > 0) {
+		length =
+			pMdnsParam->response_len + 2;
+		count += length;
+	}
+	return count;
+}
+uint16_t kalGetMdnsUplPTSz(struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo)
+{
+	uint16_t count = 0;
+
+	if (prMdnsUplayerInfo == NULL) {
+		DBGLOG(REQ, ERROR,
+			"prGlueInfo or prMdnsUplayerInfo is null.\n");
+		return MAX_MDNS_USE_SIZE;
+	}
+
+	count = strlen((const char *)
+			prMdnsUplayerInfo->name) + 1 + 2;
+	return count;
 }
 
 void kalDelMdnsRecord(struct GLUE_INFO *prGlueInfo,
@@ -7339,19 +7829,86 @@ void kalDelMdnsRecord(struct GLUE_INFO *prGlueInfo,
 	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
 	prMdnsRecordFreeList = &prMdnsInfo->rMdnsRecordFreeList;
 
+	if (prMdnsInfo->rMdnsRecordCout <= 0) {
+		DBGLOG(REQ, ERROR, " no record cnt %d\n",
+			prMdnsInfo->rMdnsRecordCout);
+		return;
+	}
+
 	LINK_FOR_EACH_ENTRY_SAFE(prMdnsParamEntry, prMdnsParamEntryNext,
 		prMdnsRecordList, rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
 		if (kalMemCmp(&prMdnsParamEntry->mdns_param,
-				&prMdnsUplayerInfo->mdns_param,
-				sizeof(struct MDNS_PARAM_T)) == 0) {
+			&prMdnsUplayerInfo->mdns_param,
+			sizeof(struct MDNS_PARAM_T)) == 0) {
 			DBGLOG(REQ, ERROR, "del mdns record.\n");
 			LINK_REMOVE_KNOWN_ENTRY(prMdnsRecordList,
 				prMdnsParamEntry);
 			LINK_INSERT_HEAD(prMdnsRecordFreeList,
 				&prMdnsParamEntry->rLinkEntry);
 		}
-
 	}
+}
+
+void kalDelMdnsRecordWithRecordKey(struct GLUE_INFO *prGlueInfo,
+		struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo)
+{
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntryNext;
+	struct LINK *prMdnsRecordList;
+	struct LINK *prMdnsRecordFreeList;
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
+	prMdnsRecordFreeList = &prMdnsInfo->rMdnsRecordFreeList;
+
+	if (prMdnsInfo->rMdnsRecordCout <= 0) {
+		DBGLOG(REQ, ERROR, " no record cnt %d\n",
+			prMdnsInfo->rMdnsRecordCout);
+		return;
+	}
+
+	LINK_FOR_EACH_ENTRY_SAFE(prMdnsParamEntry, prMdnsParamEntryNext,
+		prMdnsRecordList, rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
+		if (prMdnsParamEntry->recordKey ==
+			prMdnsUplayerInfo->recordKey) {
+			DBGLOG(REQ, ERROR, "del mdns record.\n");
+			LINK_REMOVE_KNOWN_ENTRY(prMdnsRecordList,
+				prMdnsParamEntry);
+			LINK_INSERT_HEAD(prMdnsRecordFreeList,
+				&prMdnsParamEntry->rLinkEntry);
+			prMdnsInfo->rMdnsRecordCout -= 1;
+		}
+	}
+}
+
+void kalClearMdnsRecord(struct GLUE_INFO *prGlueInfo)
+{
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntryNext;
+	struct LINK *prMdnsRecordList;
+	struct LINK *prMdnsRecordFreeList;
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
+	prMdnsRecordFreeList = &prMdnsInfo->rMdnsRecordFreeList;
+
+	if (prMdnsInfo->rMdnsRecordCout <= 0) {
+		DBGLOG(REQ, ERROR, " no record cnt %d\n",
+			prMdnsInfo->rMdnsRecordCout);
+		return;
+	}
+
+	LINK_FOR_EACH_ENTRY_SAFE(prMdnsParamEntry, prMdnsParamEntryNext,
+		prMdnsRecordList, rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
+			DBGLOG(REQ, ERROR, "clear mdns record.\n");
+			LINK_REMOVE_KNOWN_ENTRY(prMdnsRecordList,
+				prMdnsParamEntry);
+			LINK_INSERT_HEAD(prMdnsRecordFreeList,
+				&prMdnsParamEntry->rLinkEntry);
+	}
+	prMdnsInfo->rMdnsRecordCout = 0;
 }
 
 void kalShowMdnsRecord(struct GLUE_INFO *prGlueInfo)
@@ -7363,6 +7920,12 @@ void kalShowMdnsRecord(struct GLUE_INFO *prGlueInfo)
 
 	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
 	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
+
+	if (prMdnsInfo->rMdnsRecordCout <= 0) {
+		DBGLOG(REQ, ERROR, " no record cnt %d\n",
+			prMdnsInfo->rMdnsRecordCout);
+		return;
+	}
 
 	LINK_FOR_EACH_ENTRY(prMdnsParamEntry, prMdnsRecordList,
 				rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
@@ -7385,6 +7948,299 @@ void kalShowMdnsRecord(struct GLUE_INFO *prGlueInfo)
 	DBGLOG(REQ, ERROR, "record cnt %d\n", cnt);
 }
 
+void kalDelMdnsPassthrough(struct GLUE_INFO *prGlueInfo,
+		struct MDNS_INFO_UPLAYER_T *prMdnsUplayerPassthroughInfo)
+{
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PASSTHROUGH_ENTRY_T *prMdnsPassthroughEntry;
+	struct MDNS_PASSTHROUGH_ENTRY_T *prMdnsPassthroughEntryNext;
+	struct LINK *prMdnsPassthroughList;
+	struct LINK *prMdnsPassthroughFreeList;
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	prMdnsPassthroughList = &prMdnsInfo->rMdnsPassthroughList;
+	prMdnsPassthroughFreeList = &prMdnsInfo->rMdnsPassthroughFreeList;
+
+	if (prMdnsInfo->rMdnsPassthroughCout <= 0) {
+		DBGLOG(REQ, ERROR, " no passthrough count %d\n",
+			prMdnsInfo->rMdnsPassthroughCout);
+		return;
+	}
+
+	LINK_FOR_EACH_ENTRY_SAFE(prMdnsPassthroughEntry,
+		prMdnsPassthroughEntryNext,
+		prMdnsPassthroughList, rLinkEntry,
+		struct MDNS_PASSTHROUGH_ENTRY_T) {
+		if (kalMemCmp(&prMdnsPassthroughEntry->mdns_passthrough.name,
+				&prMdnsUplayerPassthroughInfo->name,
+				strlen((const char *)
+				prMdnsPassthroughEntry->mdns_passthrough.name)
+				+ 1) == 0) {
+			DBGLOG(REQ, ERROR,
+				"del mdns passthrough.\n");
+			LINK_REMOVE_KNOWN_ENTRY(prMdnsPassthroughList,
+				prMdnsPassthroughEntry);
+			LINK_INSERT_HEAD(prMdnsPassthroughFreeList,
+				&prMdnsPassthroughEntry->rLinkEntry);
+			prMdnsInfo->rMdnsPassthroughCout -= 1;
+		}
+	}
+}
+
+void kalClearMdnsPassthrough(struct GLUE_INFO *prGlueInfo)
+{
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PASSTHROUGH_ENTRY_T *prMdnsPassthroughEntry;
+	struct MDNS_PASSTHROUGH_ENTRY_T *prMdnsPassthroughEntryNext;
+	struct LINK *prMdnsPassthroughList;
+	struct LINK *prMdnsPassthroughFreeList;
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	prMdnsPassthroughList = &prMdnsInfo->rMdnsPassthroughList;
+	prMdnsPassthroughFreeList = &prMdnsInfo->rMdnsPassthroughFreeList;
+
+	if (prMdnsInfo->rMdnsPassthroughCout <= 0) {
+		DBGLOG(REQ, ERROR, " no passthrough count %d\n",
+			prMdnsInfo->rMdnsPassthroughCout);
+		return;
+	}
+
+	LINK_FOR_EACH_ENTRY_SAFE(prMdnsPassthroughEntry,
+		prMdnsPassthroughEntryNext,
+		prMdnsPassthroughList, rLinkEntry,
+		struct MDNS_PASSTHROUGH_ENTRY_T) {
+			DBGLOG(REQ, ERROR, "clear mdns passthrough.\n");
+			LINK_REMOVE_KNOWN_ENTRY(prMdnsPassthroughList,
+				prMdnsPassthroughEntry);
+			LINK_INSERT_HEAD(prMdnsPassthroughFreeList,
+				&prMdnsPassthroughEntry->rLinkEntry);
+	}
+	prMdnsInfo->rMdnsPassthroughCout = 0;
+}
+
+uint16_t kalMdnsConvettoDataBlock(struct GLUE_INFO *prGlueInfo)
+{
+	struct MDNS_INFO_T *prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+
+	struct LINK *prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
+	struct LINK *prMdnsPassthroughList = &prMdnsInfo->rMdnsPassthroughList;
+
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
+	struct MDNS_PASSTHROUGH_ENTRY_T *prMdnsPassthroughEntry;
+
+	struct MDNS_RECORD_T *prMdnsRecord = NULL;
+	struct MDNS_PARAM_T *pMdnsParam = NULL;
+
+	int recordtype = 0;
+	uint16_t length = 0;
+	uint8_t *value = NULL;
+	uint16_t u2DataIndex = 0;
+	uint16_t u2RecordCout = 0;
+	uint16_t u2passthrough_count = 0;
+
+	/* Reset currentIndex, passrthrough count, and dataBlock index */
+	prMdnsInfo->currentIndex = 0;
+	prMdnsInfo->passrthrough.count = 0;
+	prMdnsInfo->dataBlock.index = 0;
+
+	/* Loop over the record list */
+	LINK_FOR_EACH_ENTRY(prMdnsParamEntry, prMdnsRecordList,
+		rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
+
+		prMdnsRecord =
+			&prMdnsInfo->rMdnsRecordIndices[u2RecordCout];
+		pMdnsParam = &prMdnsParamEntry->mdns_param;
+
+		if (pMdnsParam->query_ptr.name_length > 0) {
+			recordtype = MDNS_ELEM_TYPE_PTR;
+			length =
+				pMdnsParam->query_ptr.name_length;
+			value =
+				pMdnsParam->query_ptr.name;
+
+			u2DataIndex = kalMdnsAddToDataBlock(
+				&prMdnsInfo->dataBlock, value, length);
+			if (u2DataIndex == FAIL_MDNS_OVERSIZE) {
+				DBGLOG(REQ, ERROR, "AddToDataBlock over\n");
+				return FAIL_MDNS_OVERSIZE;
+			}
+			/* Mark the first bit to 1*/
+			prMdnsRecord->type |= (uint8_t)0x01;
+			/* Save the u2DataIndex in section 0 of indices */
+			prMdnsRecord->nameIndex[0] =
+				u2DataIndex;
+			prMdnsRecord->type =
+				KalMdnsIncreTopHalf(prMdnsRecord->type);
+
+		}
+		/* query_srv */
+		if (pMdnsParam->query_srv.name_length > 0) {
+			recordtype = MDNS_ELEM_TYPE_SRV;
+			length =
+				pMdnsParam->query_srv.name_length;
+			value =
+				pMdnsParam->query_srv.name;
+
+			u2DataIndex =
+				kalMdnsAddToDataBlock(&prMdnsInfo->dataBlock,
+					value, length);
+			if (u2DataIndex == FAIL_MDNS_OVERSIZE) {
+				DBGLOG(REQ, ERROR, "AddToDataBlock over\n");
+				return FAIL_MDNS_OVERSIZE;
+			}
+			/* Mark the second bit to 1 */
+			prMdnsRecord->type |= (uint8_t)0x02;
+			/* Save the u2DataIndex in section 2 of indices */
+			prMdnsRecord->nameIndex[1] =
+				u2DataIndex;
+			prMdnsRecord->type =
+				KalMdnsIncreTopHalf(prMdnsRecord->type);
+		}
+		/* query_txt */
+		if (pMdnsParam->query_txt.name_length > 0) {
+			recordtype = MDNS_ELEM_TYPE_TXT;
+			length =
+				pMdnsParam->query_txt.name_length;
+			value =
+				pMdnsParam->query_txt.name;
+
+			u2DataIndex =
+				kalMdnsAddToDataBlock(&prMdnsInfo->dataBlock,
+					value, length);
+			if (u2DataIndex == FAIL_MDNS_OVERSIZE) {
+				DBGLOG(REQ, ERROR, "AddToDataBlock over\n");
+				return FAIL_MDNS_OVERSIZE;
+			}
+			/* Mark the third bit to 1 */
+			prMdnsRecord->type |= (uint8_t)0x04;
+			/* Save the u2DataIndex in section 2 of indices */
+			prMdnsRecord->nameIndex[2] =
+				u2DataIndex;
+			prMdnsRecord->type =
+				KalMdnsIncreTopHalf(prMdnsRecord->type);
+		}
+
+		/* query_a */
+		if (pMdnsParam->query_a.name_length > 0) {
+			recordtype = MDNS_ELEM_TYPE_A;
+			length =
+				pMdnsParam->query_a.name_length;
+			value =
+				pMdnsParam->query_a.name;
+
+			u2DataIndex =
+				kalMdnsAddToDataBlock(&prMdnsInfo->dataBlock,
+					value, length);
+			if (u2DataIndex == FAIL_MDNS_OVERSIZE) {
+				DBGLOG(REQ, ERROR, "AddToDataBlock over\n");
+				return FAIL_MDNS_OVERSIZE;
+			}
+			/* Mark the fourth bit to 1 */
+			prMdnsRecord->type |= (uint8_t)0x08;
+			/* Save the u2DataIndex in section 3 of indices */
+			prMdnsRecord->nameIndex[3] =
+				u2DataIndex;
+			prMdnsRecord->type =
+				KalMdnsIncreTopHalf(
+					prMdnsRecord->type);
+		}
+
+		/* response */
+		if (pMdnsParam->response_len > 0) {
+			length = pMdnsParam->response_len;
+			value = pMdnsParam->response;
+
+			u2DataIndex = kalMdnsAddToDataBlock(
+					&prMdnsInfo->dataBlock,
+					value, length);
+			if (u2DataIndex == FAIL_MDNS_OVERSIZE) {
+				DBGLOG(REQ, ERROR, "AddToDataBlock over\n");
+				return FAIL_MDNS_OVERSIZE;
+			}
+			prMdnsRecord->responseIndex =
+				u2DataIndex;
+		}
+		/* Ensure u2RecordCout is within 0 to 15 */
+		if (u2RecordCout > MAX_MDNS_CACHE_NUM) {
+			DBGLOG(REQ, ERROR, "u2RecordCout ou.\n");
+			return FAIL_MDNS_OVERSIZE;
+		}
+
+		u2RecordCout++;
+		prMdnsInfo->currentIndex = u2RecordCout;
+
+	} /* end of LINK_FOR_EACH_ENTRY*/
+
+	/* Loop over the pass through list */
+	LINK_FOR_EACH_ENTRY(prMdnsPassthroughEntry, prMdnsPassthroughList,
+		rLinkEntry, struct MDNS_PASSTHROUGH_ENTRY_T) {
+		length = (prMdnsPassthroughEntry->
+			mdns_passthrough.u2PassthroghLength);
+		value =
+			prMdnsPassthroughEntry->mdns_passthrough.name;
+
+		u2DataIndex = kalMdnsAddToDataBlock(&prMdnsInfo->dataBlock,
+				value, length);
+			if (u2DataIndex == FAIL_MDNS_OVERSIZE) {
+				DBGLOG(REQ, ERROR, "AddToDataBlock over\n");
+				return FAIL_MDNS_OVERSIZE;
+			}
+		/* Save u2DataIndex and increment passrthrough count */
+		prMdnsInfo->passrthrough.nameIndices[u2passthrough_count++] =
+			u2DataIndex;
+		prMdnsInfo->passrthrough.count = u2passthrough_count;
+
+		/* Ensure count is within bounds of nameIndices array */
+		if (prMdnsInfo->passrthrough.count >=
+				MAX_MDNS_PASSTHTOUGH_NUM) {
+		/* Handle error case where passrthrough over size */
+			DBGLOG(REQ, ERROR,
+			"Passrthrough nameIndices array beyond MAX_MDNS_PASSTHTOUGH_NUM.\n");
+			break;
+		}
+	}
+	DBGLOG(REQ, ERROR, "kalMdnsConvettoDataBlock currentIndex:%d\n",
+		prMdnsInfo->currentIndex);
+	DBGLOG(REQ, ERROR, "prMdnsInfo->passrthrough.count:%d\n",
+		prMdnsInfo->passrthrough.count);
+	DBGLOG(REQ, ERROR, "prMdnsInfo->dataBlock.index:%d\n",
+		prMdnsInfo->dataBlock.index);
+
+	return u2DataIndex;
+}
+
+uint8_t KalMdnsIncreTopHalf(uint8_t value)
+{
+	uint8_t uctopHalf = 0;
+	/*Right-shift the first 4 bits of value, and then add 1*/
+	uctopHalf = ((value >> 4) + 1) & 0x0F;
+	return (uctopHalf << 4) | (value & 0x0F);
+}
+
+void kalShowMdnsPassthrough(struct GLUE_INFO *prGlueInfo)
+{
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PASSTHROUGH_ENTRY_T *prMdnsPassthroughEntry;
+	struct LINK *prMdnsPassthroughList;
+	int cnt = 0;
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	prMdnsPassthroughList = &prMdnsInfo->rMdnsPassthroughList;
+
+	if (prMdnsInfo->rMdnsPassthroughCout <= 0) {
+		DBGLOG(REQ, ERROR, " no passthrough count %d\n",
+			prMdnsInfo->rMdnsPassthroughCout);
+		return;
+	}
+
+	LINK_FOR_EACH_ENTRY(prMdnsPassthroughEntry, prMdnsPassthroughList,
+				rLinkEntry, struct MDNS_PASSTHROUGH_ENTRY_T) {
+		DBGLOG(REQ, ERROR, "passthrough name: %s\n",
+			prMdnsPassthroughEntry->mdns_passthrough.name);
+		cnt++;
+	}
+	DBGLOG(REQ, ERROR, "passthrough cnt %d\n", cnt);
+}
 
 void kalSendMdnsDisableToFw(struct GLUE_INFO *prGlueInfo)
 {
@@ -7417,87 +8273,358 @@ void kalSendMdnsDisableToFw(struct GLUE_INFO *prGlueInfo)
 		sizeof(struct CMD_MDNS_PARAM_T));
 }
 
-void kalSendClearRecordToFw(struct GLUE_INFO *prGlueInfo)
+uint32_t kalGetAndResetHitCounterToFw(struct GLUE_INFO *prGlueInfo,
+		int recordKey)
 {
 	struct CMD_MDNS_PARAM_T *cmdMdnsParam;
-	uint32_t u4BufLen = 0;
 	uint32_t rStatus = WLAN_STATUS_SUCCESS;
+	uint32_t u4BufLen;
+	uint32_t u4Hit = -1;
 
 	cmdMdnsParam =
 		kalMemAlloc(sizeof(struct CMD_MDNS_PARAM_T), PHY_MEM_TYPE);
 	if (!cmdMdnsParam) {
 		DBGLOG(REQ, WARN, "%s, alloc mem failed\n", __func__);
-		return;
+		return u4Hit;
 	}
 
 	kalMemZero(cmdMdnsParam, sizeof(struct CMD_MDNS_PARAM_T));
 
-	cmdMdnsParam->ucCmd = MDNS_CMD_CLEAR_RECORD;
+	cmdMdnsParam->ucCmd = MDNS_CMD_GET_HITCOUNTER;
+	cmdMdnsParam->ucRecordId = RECORDKEY_BASE-recordKey + 1;
 
-	rStatus = kalIoctl(prGlueInfo, wlanoidSetMdnsCmdToFw,
-			   cmdMdnsParam,
-			   sizeof(struct CMD_MDNS_PARAM_T),
-			   TRUE, TRUE, TRUE, &u4BufLen);
+	DBGLOG(SW4, STATE, "mDNS gethit.\n");
 
-	if (rStatus != WLAN_STATUS_SUCCESS)
-		DBGLOG(REQ, ERROR, "set mdns cmd error.\n");
+	rStatus = kalIoctl(prGlueInfo,
+						wlanoidGetMdnsHitMiss,
+						cmdMdnsParam,
+						sizeof(struct CMD_MDNS_PARAM_T),
+						TRUE,
+						TRUE,
+						TRUE,
+						&u4BufLen);
 
+	if (rStatus != WLAN_STATUS_SUCCESS) {
+		DBGLOG(REQ, ERROR, "wlanoidGetMdnsHitMiss error.\n");
+		return u4Hit;
+	}
 
 	kalMemFree(cmdMdnsParam, PHY_MEM_TYPE,
 		sizeof(struct CMD_MDNS_PARAM_T));
+
+	u4Hit = prGlueInfo->prAdapter->rMdnsInfo.rMdnsRecordEvent.u4MdnsHitMiss;
+	return u4Hit;
+
 }
 
-
-void kalSendMdnsRecordToFw(struct GLUE_INFO *prGlueInfo)
+uint32_t kalGetAndResetMissCounterToFw(struct GLUE_INFO *prGlueInfo)
 {
 	struct CMD_MDNS_PARAM_T *cmdMdnsParam;
-	struct MDNS_INFO_T *prMdnsInfo;
-	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
-	struct LINK *prMdnsRecordList;
-	uint8_t i;
-	uint32_t u4BufLen = 0;
 	uint32_t rStatus = WLAN_STATUS_SUCCESS;
+	uint32_t u4BufLen;
+	uint32_t u4Miss = -1;
 
 	cmdMdnsParam =
 		kalMemAlloc(sizeof(struct CMD_MDNS_PARAM_T), PHY_MEM_TYPE);
 	if (!cmdMdnsParam) {
 		DBGLOG(REQ, WARN, "%s, alloc mem failed\n", __func__);
-		return;
+		return u4Miss;
 	}
 
-	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
-	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
+	kalMemZero(cmdMdnsParam, sizeof(struct CMD_MDNS_PARAM_T));
 
-	i = 0;
+	cmdMdnsParam->ucCmd = MDNS_CMD_GET_MISSCOUNTER;
+	DBGLOG(SW4, STATE, "mDNS getmiss.\n");
 
-	LINK_FOR_EACH_ENTRY(prMdnsParamEntry, prMdnsRecordList,
-			rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
 
-		kalMemZero(cmdMdnsParam, sizeof(struct CMD_MDNS_PARAM_T));
+	rStatus = kalIoctl(prGlueInfo,
+						wlanoidGetMdnsHitMiss,
+						cmdMdnsParam,
+						sizeof(struct CMD_MDNS_PARAM_T),
+						TRUE,
+						TRUE,
+						TRUE,
+						&u4BufLen);
 
-		i++;
-		cmdMdnsParam->ucCmd = MDNS_CMD_ADD_RECORD;
-		cmdMdnsParam->u4RecordId = i;
-		kalMemCopy(&cmdMdnsParam->mdns_param,
-				&prMdnsParamEntry->mdns_param,
-				sizeof(struct MDNS_PARAM_T));
-
-		rStatus = kalIoctl(prGlueInfo, wlanoidSetMdnsCmdToFw,
-			   cmdMdnsParam,
-			   sizeof(struct CMD_MDNS_PARAM_T),
-			   TRUE, TRUE, TRUE, &u4BufLen);
-
-		if (rStatus != WLAN_STATUS_SUCCESS)
-			DBGLOG(REQ, ERROR, "set mdns cmd error.\n");
+	if (rStatus != WLAN_STATUS_SUCCESS) {
+		DBGLOG(REQ, ERROR, "wlanoidGetMdnsHitMiss error.\n");
+		return u4Miss;
 	}
 
 	kalMemFree(cmdMdnsParam, PHY_MEM_TYPE,
 		sizeof(struct CMD_MDNS_PARAM_T));
+
+	u4Miss =
+		prGlueInfo->prAdapter->rMdnsInfo.rMdnsRecordEvent.u4MdnsHitMiss;
+	return u4Miss;
+
 }
 
-void kalMdnsProcess(IN struct GLUE_INFO *prGlueInfo,
+void kalSendMdnsFlagsToFw(struct GLUE_INFO *prGlueInfo)
+{
+	struct CMD_MDNS_PARAM_T *cmdMdnsParam;
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_SETTING_FLAGS_T *prMdnsSaveFlags;
+	uint32_t u4BufLen = 0;
+	uint32_t rStatus = WLAN_STATUS_SUCCESS;
+	uint16_t u2DataCurrentIndex = 0;
+	uint8_t *ucPayloadAssemble = NULL;
+
+	uint16_t u2totalSize = 0;
+	/* Amount of data left to copy into cmdMdnsParam->ucpayload */
+	uint16_t u2RemainSize = 0;
+	/* Maximum size per chunk is 1024 bytes */
+	uint16_t u2MaxPayloadSize = 0;
+	/* Amount of data already copied into cmdMdnsParam->ucpayload */
+	uint16_t u2CopiedSize = 0;
+    /* Calculate the size of the current chunk */
+	uint16_t u2ChunkSize = 0;
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	prMdnsSaveFlags = &prMdnsInfo->rMdnsSaveFlags;
+
+	DBGLOG(REQ, STATE, "kalSendMdnsFlagsToFw enter .\n");
+
+	cmdMdnsParam = kalMemAlloc(sizeof(struct CMD_MDNS_PARAM_T),
+		PHY_MEM_TYPE);
+	if (!cmdMdnsParam) {
+		DBGLOG(REQ, WARN, "%s, alloc CMD_MDNS_PARAM_T mem failed.\n",
+			__func__);
+		return;
+	}
+
+	ucPayloadAssemble = kalMemAlloc(sizeof(uint8_t)*MAX_MDNS_USE_SIZE,
+		PHY_MEM_TYPE);
+	if (!ucPayloadAssemble) {
+		DBGLOG(REQ, WARN, "%s, alloc ucPayloadAssemble mem failed.\n",
+			__func__);
+		 kalMemFree(cmdMdnsParam, PHY_MEM_TYPE,
+			sizeof(struct CMD_MDNS_PARAM_T));
+		return;
+	}
+
+	kalMemZero(cmdMdnsParam, sizeof(struct CMD_MDNS_PARAM_T));
+	cmdMdnsParam->ucCmd = MDNS_CMD_SET_IPV6_WAKEUP_FLAG;
+
+	cmdMdnsParam->ucWakeFlag = prGlueInfo->prAdapter->mdns_wake_flag;
+	cmdMdnsParam->ucPassthroughBehavior =
+		prMdnsSaveFlags->ucPassthroughBehavior;
+	cmdMdnsParam->ucIPV6WakeupFlag = prMdnsSaveFlags->ucIPV6WakeupFlag;
+
+	/* Add dataBlock, indices, and passrthrough*/
+	/* into payload of cmdMdnsParam */
+	kalMdnsConvettoDataBlock(prGlueInfo);
+
+	/* Prepare the payload of cmdMdnsParam: first is dataBlock */
+	u2DataCurrentIndex =
+		kalMdnsCopyDataToPayload(&prMdnsInfo->dataBlock,
+			ucPayloadAssemble, u2DataCurrentIndex);
+	/* Then copy indices array */
+	u2DataCurrentIndex =
+		kalMdnsCopyRecordToPayload(prMdnsInfo->rMdnsRecordIndices,
+			prMdnsInfo->currentIndex, ucPayloadAssemble,
+			u2DataCurrentIndex);
+	/* Finally, copy the passrthrough */
+	u2DataCurrentIndex =
+		kalMdnsCopyPassToPayload(&prMdnsInfo->passrthrough,
+			ucPayloadAssemble, u2DataCurrentIndex);
+
+	DBGLOG(REQ, WARN, "u2DataCurrentIndex:%d.\n", u2DataCurrentIndex);
+
+	/* Amount of data already copied  */
+	/*is indicated by u2DataCurrentIndex */
+	u2totalSize = u2DataCurrentIndex;
+	/* Amount of data left to copy  */
+	u2RemainSize = u2totalSize;
+	/* Maximum size per chunk is 1024 bytes */
+	u2MaxPayloadSize = MAX_MDNS_TRANSFER_SIZE;
+	/* Amount of data already copied  */
+	u2CopiedSize = 0;
+
+	cmdMdnsParam->u2PayloadTotallength = u2totalSize;
+
+	while (u2RemainSize > 0) {
+		/* Calculate the size of the current chunk */
+		u2ChunkSize = u2RemainSize > u2MaxPayloadSize ?
+			u2MaxPayloadSize : u2RemainSize;
+
+		DBGLOG(REQ, INFO, "u2ChunkSize:%d.\n", u2ChunkSize);
+		/* Clear cmdMdnsParam->ucpayload */
+		memset(cmdMdnsParam->ucPayload, 0, u2MaxPayloadSize);
+
+		/* Copy a chunk of data to cmdMdnsParam->ucpayload */
+		memcpy(cmdMdnsParam->ucPayload,
+			ucPayloadAssemble + u2CopiedSize, u2ChunkSize);
+
+		/* Set the chunk order */
+		cmdMdnsParam->ucPayloadOrder = u2CopiedSize / u2MaxPayloadSize;
+
+		DBGLOG(REQ, INFO, "cmdMdnsParam->ucPayloadOrder:%d.\n",
+			cmdMdnsParam->ucPayloadOrder);
+
+		/* Then send it to the firmware */
+		rStatus = kalIoctl(prGlueInfo, wlanoidSetMdnsCmdToFw,
+			cmdMdnsParam,
+			sizeof(struct CMD_MDNS_PARAM_T),
+			TRUE, TRUE, TRUE, &u4BufLen);
+
+		if (rStatus != WLAN_STATUS_SUCCESS) {
+			DBGLOG(REQ, ERROR, "kalSendMdnsFlagsToFw error.\n");
+			break;
+		}
+		/* Update the copied size and remaining size */
+		u2CopiedSize += u2ChunkSize;
+		u2RemainSize -= u2ChunkSize;
+	}
+	DBGLOG(REQ, INFO, "u2CopiedSize:%d.\n", u2CopiedSize);
+	DBGLOG(REQ, INFO, "u2RemainSize:%d.\n", u2RemainSize);
+
+	kalMemFree(cmdMdnsParam, PHY_MEM_TYPE,
+		sizeof(struct CMD_MDNS_PARAM_T));
+	kalMemFree(ucPayloadAssemble, PHY_MEM_TYPE,
+		sizeof(uint8_t) * MAX_MDNS_USE_SIZE);
+}
+
+uint16_t kalMdnsCopyDataToPayload(struct MDNS_DATABLOCK_T  *dataBlock,
+	uint8_t *payload, uint16_t start)
+{
+
+	uint16_t dataBlockLength = dataBlock->index;
+	uint16_t i = 0;
+
+	/* Include the length of dataBlock */
+	payload[start] = (dataBlockLength >> 8) & 0xFF;
+	payload[start + 1] = dataBlockLength & 0xFF;
+
+	/* Copy the data of dataBlock into payload */
+	for (i = 0; i < dataBlockLength; i++)
+		payload[start + 2 + i] = dataBlock->data[i];
+
+	return (start + 2 + dataBlockLength);
+}
+
+uint16_t kalMdnsCopyRecordToPayload(struct MDNS_RECORD_T *prMdnsRecordIndices,
+	uint16_t indexCount, uint8_t *payload, uint16_t start)
+{
+	/* Calculate the length of indices array */
+	uint16_t u2indicesLength = indexCount * sizeof(struct MDNS_RECORD_T);
+	uint16_t i = 0;
+	struct MDNS_RECORD_T *mdns_current = NULL;
+
+	/* Include the length of indices array */
+	payload[start] = (u2indicesLength >> 8) & 0xFF;
+	payload[start+1] = u2indicesLength & 0xFF;
+
+	/* Copy each index into payload */
+	mdns_current = prMdnsRecordIndices;
+	for (i = 0; i < indexCount; i++) {
+		memcpy((payload + start + 2 + i * sizeof(struct MDNS_RECORD_T)),
+			mdns_current, sizeof(struct MDNS_RECORD_T));
+		mdns_current++;
+	}
+
+	return(start + 2 + u2indicesLength);
+}
+
+uint16_t kalMdnsCopyPassToPayload(struct MDNS_PASSTHROUGH_T *passrthrough,
+	uint8_t *payload, uint16_t start)
+{
+	/* Calculate the length of passrthrough */
+	uint16_t passrthroughLength =
+		passrthrough->count * sizeof(uint16_t);
+	uint16_t return_value = 0;
+
+	/* Include the length of passrthrough */
+	/*  High byte of length */
+	payload[start] = (passrthroughLength >> 8) & 0xFF;
+	/*  Low byte of length*/
+	payload[start+1] = passrthroughLength & 0xFF;
+
+	memcpy((payload + start + 2),
+			passrthrough->nameIndices, passrthroughLength);
+
+	return_value = start + 2 + passrthroughLength;
+	return return_value;
+}
+
+uint16_t kalMdnsAddToDataBlock(struct MDNS_DATABLOCK_T *dataBlock,
+	uint8_t *data, uint16_t dataLength)
+{
+	uint16_t currentIndex;
+	uint16_t existingIndex = 0;
+	uint16_t tempLength;
+	uint16_t i = 0;
+
+	if (dataBlock == NULL) {
+		DBGLOG(REQ, ERROR, "dataBlock is NULL.\n");
+		return FAIL_MDNS_OVERSIZE;
+	}
+	currentIndex = dataBlock->index;
+	/* Check whether the data already exists in the data block */
+	while (existingIndex < currentIndex) {
+		/* Check if existingIndex is valid */
+		if (existingIndex >= MAX_MDNS_USE_SIZE - 2)
+			return FAIL_MDNS_OVERSIZE;
+
+		tempLength =
+			(dataBlock->data[existingIndex] << 8) +
+			dataBlock->data[existingIndex + 1];
+
+		/* Add the overflow checking */
+		if (tempLength >= MAX_MDNS_USE_SIZE - 2) {
+			DBGLOG(REQ, ERROR, "AddToDataBlock overflow.\n");
+			return FAIL_MDNS_OVERSIZE;
+		}
+
+		if (existingIndex >= MAX_MDNS_USE_SIZE - 2)
+			return FAIL_MDNS_OVERSIZE;
+
+		if (existingIndex + 2 + tempLength >= MAX_MDNS_USE_SIZE)
+			return FAIL_MDNS_OVERSIZE;
+
+		if (tempLength == dataLength &&
+			memcmp(data, &dataBlock->data[existingIndex + 2],
+				   dataLength) == 0) {
+			return existingIndex;
+		}
+		existingIndex += tempLength + 2;
+	}
+
+	/* Check if the addition of new data will overflow the buffer */
+	if (currentIndex + dataLength + 2 >= MAX_MDNS_USE_SIZE)
+		return FAIL_MDNS_OVERSIZE;
+
+	if (currentIndex + 2 >= MAX_MDNS_USE_SIZE)
+		return FAIL_MDNS_OVERSIZE;
+
+	dataBlock->data[currentIndex++] = (dataLength >> 8) & 0xFF;
+	dataBlock->data[currentIndex++] = dataLength & 0xFF;
+
+	if (currentIndex + dataLength >= MAX_MDNS_USE_SIZE)
+		return FAIL_MDNS_OVERSIZE;
+
+	for (i = 0; i < dataLength; i++) {
+		if (currentIndex >= MAX_MDNS_USE_SIZE)
+			return FAIL_MDNS_OVERSIZE;
+		dataBlock->data[currentIndex++] = data[i];
+	}
+
+	dataBlock->index = currentIndex;
+
+	/* return the starting index of the new data */
+	return currentIndex - dataLength - 2;
+}
+
+uint32_t kalMdnsProcess(IN struct GLUE_INFO *prGlueInfo,
 		IN struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo)
 {
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_SETTING_FLAGS_T *prMdnsSaveFlags;
+	uint32_t u4Ret = WLAN_STATUS_SUCCESS;
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	prMdnsSaveFlags = &prMdnsInfo->rMdnsSaveFlags;
+
 	if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_ENABLE) {
 		if (prGlueInfo->prAdapter->mdns_offload_enable == FALSE) {
 			DBGLOG(REQ, INFO, "mDNS Enable.\n");
@@ -7508,33 +8635,73 @@ void kalMdnsProcess(IN struct GLUE_INFO *prGlueInfo,
 	}
 
 	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_ADD_RECORD) {
-		if (prGlueInfo->prAdapter->mdns_offload_enable == TRUE) {
-			DBGLOG(REQ, INFO, "Add Record.\n");
-			kalAddMdnsRecord(prGlueInfo, prMdnsUplayerInfo);
-		} else
-			DBGLOG(REQ, WARN, "mDNS is disable, no add record.\n");
+		DBGLOG(REQ, INFO, "Add Record.\n");
+		u4Ret = kalAddMdnsRecord(prGlueInfo, prMdnsUplayerInfo);
+	}
+
+	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_DEL_RECORD) {
+		DBGLOG(REQ, INFO, "Delete Record.\n");
+		kalDelMdnsRecordWithRecordKey(prGlueInfo,
+			prMdnsUplayerInfo);
 	}
 
 	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_DISABLE) {
-		if (prGlueInfo->prAdapter->mdns_offload_enable == TRUE) {
-			DBGLOG(REQ, INFO, "mdns disable.\n");
-			prGlueInfo->prAdapter->mdns_offload_enable = FALSE;
-			kalMdnsOffloadInit(prGlueInfo->prAdapter);
-			kalSendMdnsDisableToFw(prGlueInfo);
-		} else
-			DBGLOG(REQ, STATE, "mDNS is aready disabled.\n");
+		DBGLOG(REQ, INFO, "mdns disable.\n");
+		prGlueInfo->prAdapter->mdns_offload_enable = FALSE;
+		kalSendMdnsDisableToFw(prGlueInfo);
+	}
+
+	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_SET_PASSTHTOUGH) {
+		DBGLOG(REQ, INFO, "mdns set passthrough behavior.\n");
+		prMdnsSaveFlags->ucPassthroughBehavior =
+			prMdnsUplayerInfo->passthroughBehavior;
+	}
+
+	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_ADD_PASSTHTOUGH) {
+		DBGLOG(REQ, INFO, "add  passthrough.\n");
+		kalAddMdnsPassthrough(prGlueInfo,
+			prMdnsUplayerInfo);
+	}
+
+	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_DEL_PASSTHTOUGH) {
+		DBGLOG(REQ, INFO, "del  passthrough.\n");
+		kalDelMdnsPassthrough(prGlueInfo,
+			prMdnsUplayerInfo);
+	}
+
+	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_GET_HITCOUNTER) {
+		DBGLOG(REQ, INFO, "get hit count and reset to 0\n");
+		return kalGetAndResetHitCounterToFw(prGlueInfo,
+			prMdnsUplayerInfo->recordKey);
+	}
+
+	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_GET_MISSCOUNTER) {
+		DBGLOG(REQ, INFO, "get miss count and reset to 0\n");
+		return kalGetAndResetMissCounterToFw(prGlueInfo);
+	}
+
+	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_RESETALL) {
+		DBGLOG(REQ, INFO, "reset all .\n");
+		kalClearMdnsRecord(prGlueInfo);
+		kalClearMdnsPassthrough(prGlueInfo);
+	}
+
+	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_SET_IPV6_WAKEUP_FLAG) {
+		DBGLOG(REQ, INFO, "mdns set IPV6WakeupFlag = %d.\n",
+			prMdnsUplayerInfo->ucIPV6WakeupFlag);
+		prMdnsSaveFlags->ucIPV6WakeupFlag =
+			prMdnsUplayerInfo->ucIPV6WakeupFlag;
 	}
 
 #if CFG_SUPPORT_MDNS_OFFLOAD_GVA
 	/* only for gva, need to remove record when ttl is 0 */
 	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_DEL_RECORD) {
-		if (prGlueInfo->prAdapter->mdns_offload_enable == TRUE) {
-			DBGLOG(REQ, INFO, "DEL Record.\n");
-			kalDelMdnsRecord(prGlueInfo, prMdnsUplayerInfo);
-		} else
-			DBGLOG(REQ, WARN, "mDNS is disable, no del record.\n");
-		}
+		DBGLOG(REQ, INFO, "DEL Record.\n");
+		kalDelMdnsRecord(prGlueInfo, prMdnsUplayerInfo);
+	}
 #endif
+
+	return u4Ret;
 }
 
 #if CFG_SUPPORT_MDNS_OFFLOAD_GVA
@@ -8623,7 +9790,17 @@ void kalIndicateChannelSwitch(IN struct GLUE_INFO *prGlueInfo,
 	DBGLOG(REQ, STATE, "DFS channel switch to %d\n", ucChannelNum);
 
 	cfg80211_chandef_create(&chandef, prChannel, rChannelType);
-	cfg80211_ch_switch_notify(prGlueInfo->prDevHandler, &chandef);
+	cfg80211_ch_switch_notify(prGlueInfo->prDevHandler, &chandef
+#if (CFG_ADVANCED_80211_MLO == 1) || \
+	KERNEL_VERSION(6, 0, 0) <= CFG80211_VERSION_CODE
+		, 0
+#if (CFG_KERNEL_AN13_515 == 1 && \
+	KERNEL_VERSION(5, 15, 94) <= LINUX_VERSION_CODE) || \
+	KERNEL_VERSION(6, 1, 25) <= CFG80211_VERSION_CODE
+		, 0
+#endif
+#endif
+		);
 }
 #endif
 
@@ -8636,8 +9813,12 @@ void kalInitDevWakeup(struct ADAPTER *prAdapter, struct device *prDev)
 	 * so usbcore will re-enable our remote wakeup function
 	 * before entering suspend.
 	 */
-	if (prAdapter->rWifiVar.ucWow)
+#if CFG_WOW_SUPPORT
+	if (prAdapter->rWifiVar.ucWow &&
+		(prAdapter->rWowCtrl.astWakeHif[0].ucWakeupHif
+		!= ENUM_HIF_TYPE_GPIO))
 		device_init_wakeup(prDev, TRUE);
+#endif
 }
 
 u_int8_t kalIsOuiMask(const uint8_t pucMacAddrMask[MAC_ADDR_LEN])
@@ -9025,11 +10206,16 @@ int kalRxNapiPoll(struct napi_struct *napi, int budget)
 			break;
 
 #if IS_ENABLED(CFG_GRO_SUPPORT)
+#if KERNEL_VERSION(5, 12, 0) <= CFG80211_VERSION_CODE
 		napi_gro_receive(napi, prSkb);
 #else
-		if (netif_receive_skb(prSkb) != NET_RX_SUCCESS)
-#endif /* CFG_GRO_SUPPORT */
+		if (napi_gro_receive(napi, prSkb) == GRO_DROP)
 			ucAccept = FALSE;
+#endif
+#else
+		if (netif_receive_skb(prSkb) != NET_RX_SUCCESS)
+			ucAccept = FALSE;
+#endif /* CFG_GRO_SUPPORT */
 
 		if (ucAccept)
 			work_done++;
@@ -9076,10 +10262,11 @@ unsigned long kal_kallsyms_lookup_name(const char *name)
 {
 	unsigned long ret = 0;
 
-	/* TODO: need to inplement >= v5.4 */
-#if	(CFG_ENABLE_GKI_SUPPORT != 1) && \
-		KERNEL_VERSION(5, 4, 0) > LINUX_VERSION_CODE
-	ret = kallsyms_lookup_name(name);
+	DBGLOG(INIT, INFO, "%s(%s)\r\n", __func__, name);
+#if	(CFG_ENABLE_GKI_SUPPORT != 1)
+	ret = (unsigned long)__symbol_get(name);
+#endif
+
 	if (ret) {
 #ifdef CONFIG_ARM
 #ifdef CONFIG_THUMB2_KERNEL
@@ -9088,9 +10275,17 @@ unsigned long kal_kallsyms_lookup_name(const char *name)
 #endif
 #endif
 	}
-#endif
 	return ret;
 }
+
+void kal_kallsyms_put(const char *name)
+{
+	DBGLOG(INIT, INFO, "%s(%s)\r\n", __func__, name);
+#if	(CFG_ENABLE_GKI_SUPPORT != 1)
+	__symbol_put(name);
+#endif
+}
+
 void kal_sched_set(struct task_struct *p, int policy,
 		const struct sched_param *param,
 		int nice)

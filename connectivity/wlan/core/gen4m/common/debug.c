@@ -836,6 +836,9 @@ void wlanPrintFwLog(uint8_t *pucLogContent,
 	}
 	break;
 	case DEBUG_MSG_TYPE_DRIVER:
+		if (!pucFmt)
+			break;
+
 		/* Only 128 Bytes is available to print in driver */
 		va_start(args, pucFmt);
 		err = vsnprintf(aucLogBuffer, sizeof(aucLogBuffer) - 1, pucFmt,

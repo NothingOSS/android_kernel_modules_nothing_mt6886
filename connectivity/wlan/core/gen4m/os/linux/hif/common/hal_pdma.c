@@ -891,9 +891,13 @@ void halSetFWOwn(struct ADAPTER *prAdapter, u_int8_t fgEnableGlobalInt)
 		prAdapter->fgIsFwOwn = TRUE;
 		prHifInfo->fgIsBackupIntSta = false;
 
-		DBGLOG(INIT, INFO, "[%s]: FW OWN:%u, IntSta:0x%08x\n",
-		       prAdapter->prGlueInfo->fw_own_caller,
-		       fgResult, prHifInfo->u4WakeupIntSta);
+		/* call from ICS log not print in default */
+		if (prHifInfo->u4WakeupIntSta & BIT(15))
+			DBGLOG(INIT, TRACE, "FW OWN:%u, IntSta:0x%08x\n",
+			fgResult, prHifInfo->u4WakeupIntSta);
+		else
+			DBGLOG(INIT, INFO, "FW OWN:%u, IntSta:0x%08x\n",
+			fgResult, prHifInfo->u4WakeupIntSta);
 		prHifInfo->u4WakeupIntSta = 0;
 	}
 

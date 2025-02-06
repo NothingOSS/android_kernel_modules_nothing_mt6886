@@ -2811,7 +2811,13 @@ int32_t wf_reg_start_wrapper(enum connv3_drv_type from_drv,
 		goto exit;
 	}
 
-	ACQUIRE_POWER_CONTROL_FROM_PM(prAdapter);
+	if (prDebugOps && prDebugOps->checkIsMcuOff) {
+		DBGLOG(HAL, WARN, "MCU off\n");
+		ret = -EFAULT;
+		goto exit;
+	}
+
+	halSetDriverOwn(prAdapter);
 	if (prAdapter->fgIsFwOwn == TRUE) {
 		DBGLOG_LIMITED(HAL, WARN,
 			"Driver own fail.\n");

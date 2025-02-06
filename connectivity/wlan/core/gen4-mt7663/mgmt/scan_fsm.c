@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  * Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/mgmt/scan_fsm.c#2
  */
@@ -471,6 +425,11 @@ void scnFsmMsgStart(IN struct ADAPTER *prAdapter, IN struct MSG_HDR *prMsgHdr)
 			ASSERT(0);
 		}
 
+#if CFG_SUPPORT_MTK_SCAN_EVENT
+		/*send vender event scan start*/
+		mtk_cfg80211_vendor_event_scan_status(prAdapter,
+		SCN_VENDOR_COMMAND_SCAN_START);
+#endif
 		cnmMemFree(prAdapter, prMsgHdr);
 		scnFsmSteps(prAdapter, SCAN_STATE_SCANNING);
 	} else {
@@ -546,6 +505,11 @@ void scnFsmMsgAbort(IN struct ADAPTER *prAdapter, IN struct MSG_HDR *prMsgHdr)
 				prScanParam->ucBssIndex,
 				eStatus);
 
+#if CFG_SUPPORT_MTK_SCAN_EVENT
+			/*send vender event scan done*/
+			mtk_cfg80211_vendor_event_scan_status(prAdapter,
+			SCN_VENDOR_COMMAND_SCAN_DONE);
+#endif
 			/* switch to next pending scan */
 			scnFsmSteps(prAdapter, SCAN_STATE_IDLE);
 		} else {
@@ -777,7 +741,8 @@ void scnFsmRemovePendingMsg(IN struct ADAPTER *prAdapter, IN uint8_t ucSeqNum,
 				prRemoveLinkEntry
 					= &(prScanReqMsg->rMsgHdr.rLinkEntry);
 				prRemoveMsgHdr = prPendingMsgHdr;
-				fgIsRemovingScan = TRUE;
+				if (__MSG_ID__ != MID_RLM_SCN_SCAN_REQ)
+					fgIsRemovingScan = TRUE;
 			}
 		} else if (__MSG_ID__ == MID_AIS_SCN_SCAN_REQ_V2
 			   || __MSG_ID__ == MID_BOW_SCN_SCAN_REQ_V2
@@ -792,7 +757,8 @@ void scnFsmRemovePendingMsg(IN struct ADAPTER *prAdapter, IN uint8_t ucSeqNum,
 				prRemoveLinkEntry
 					= &(prScanReqMsgV2->rMsgHdr.rLinkEntry);
 				prRemoveMsgHdr = prPendingMsgHdr;
-				fgIsRemovingScan = TRUE;
+				if (__MSG_ID__ != MID_RLM_SCN_SCAN_REQ_V2)
+					fgIsRemovingScan = TRUE;
 			}
 		}
 #undef __MSG_ID__
@@ -975,6 +941,11 @@ void scnEventScanDone(IN struct ADAPTER *prAdapter,
 		scnFsmGenerateScanDoneMsg(prAdapter, prScanParam->ucSeqNum,
 			prScanParam->ucBssIndex, SCAN_STATUS_DONE);
 
+#if CFG_SUPPORT_MTK_SCAN_EVENT
+		/*send vender event scan done*/
+		mtk_cfg80211_vendor_event_scan_status(prAdapter,
+		SCN_VENDOR_COMMAND_SCAN_DONE);
+#endif
 		/* switch to next pending scan */
 		scnFsmSteps(prAdapter, SCAN_STATE_IDLE);
 	} else {
@@ -1313,10 +1284,17 @@ scnFsmSchedScanRequest(IN struct ADAPTER *prAdapter,
 /*----------------------------------------------------------------------------*/
 u_int8_t scnFsmSchedScanStopRequest(IN struct ADAPTER *prAdapter)
 {
+	struct BSS_INFO *prAisBssInfo;
+	struct SCAN_INFO *prScanInfo;
+
 	ASSERT(prAdapter);
+
+	prAisBssInfo = prAdapter->prAisBssInfo;
+	prScanInfo = &(prAdapter->rWifiVar.rScanInfo);
+
 	log_dbg(SCN, INFO, "scnFsmSchedScanStopRequest\n");
 
-	if (prAdapter->prAisBssInfo == NULL) {
+	if (prAisBssInfo == NULL) {
 		log_dbg(SCN, WARN, "prAisBssInfo is NULL\n");
 		return FALSE;
 	}
@@ -1329,6 +1307,13 @@ u_int8_t scnFsmSchedScanStopRequest(IN struct ADAPTER *prAdapter)
 	prAdapter->prAisBssInfo->fgIsPNOEnable = FALSE;
 #endif
 	prAdapter->rWifiVar.rScanInfo.fgSchedScanning = FALSE;
+
+	/* Deactivate network when not connected and not in normal scan */
+	if (prAisBssInfo->eConnectionState == PARAM_MEDIA_STATE_DISCONNECTED &&
+		prScanInfo->eCurrentState == SCAN_STATE_IDLE) {
+		UNSET_NET_ACTIVE(prAdapter, prAisBssInfo->ucBssIndex);
+		nicDeactivateNetwork(prAdapter, prAisBssInfo->ucBssIndex);
+	}
 
 	return TRUE;
 }

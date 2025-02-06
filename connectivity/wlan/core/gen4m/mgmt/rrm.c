@@ -208,9 +208,19 @@ void rrmFreeMeasurementResources(struct ADAPTER *prAdapter,
 	while (!LINK_IS_EMPTY(prReportLink)) {
 		LINK_REMOVE_HEAD(prReportLink, prReportEntry,
 				 struct RM_MEASURE_REPORT_ENTRY *);
-		kalMemFree(prReportEntry->pucMeasReport,
-			VIR_MEM_TYPE, prReportEntry->u2MeasReportLen);
-		kalMemFree(prReportEntry, VIR_MEM_TYPE, sizeof(*prReportEntry));
+
+		if (!prReportEntry) {
+			DBGLOG(RRM, ERROR, "prReportEntry is NULL!!\n");
+			break;
+		}
+
+		if (prReportEntry->pucMeasReport)
+			kalMemFree(prReportEntry->pucMeasReport,
+				VIR_MEM_TYPE,
+				prReportEntry->u2MeasReportLen);
+		kalMemFree(prReportEntry,
+			VIR_MEM_TYPE,
+			sizeof(*prReportEntry));
 	}
 	kalMemZero(prRmReq, sizeof(*prRmReq));
 	kalMemZero(prRmRep, sizeof(*prRmRep));

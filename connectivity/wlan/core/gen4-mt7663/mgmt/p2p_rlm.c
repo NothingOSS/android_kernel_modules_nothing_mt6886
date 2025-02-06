@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: @(#) p2p_rlm.c@@
  */
@@ -1327,6 +1281,48 @@ enum ENUM_CHNL_EXT rlmGetScoForAP(struct ADAPTER *prAdapter,
 	return eSCO;
 }
 
+enum ENUM_CHNL_EXT rlmGetScoByChnInfo(struct ADAPTER *prAdapter,
+		struct RF_CHANNEL_INFO *prChannelInfo)
+{
+	enum ENUM_CHNL_EXT eSCO = CHNL_EXT_SCN;
+	int32_t i4DeltaBw;
+	uint32_t u4AndOneSCO;
+
+	if (prChannelInfo->ucChnlBw == MAX_BW_40MHZ) {
+		/* If BW 40, compare S0 and primary channel freq */
+		if (prChannelInfo->u4CenterFreq1
+			> prChannelInfo->u2PriChnlFreq)
+			eSCO = CHNL_EXT_SCA;
+		else
+			eSCO = CHNL_EXT_SCB;
+	} else if (prChannelInfo->ucChnlBw > MAX_BW_40MHZ) {
+		/* P: PriChnlFreq,
+		 * A: CHNL_EXT_SCA,
+		 * B: CHNL_EXT_SCB, -:BW SPAN 5M
+		 */
+		/* --|----|--CenterFreq1--|----|-- */
+		/* --|----|--CenterFreq1--B----P-- */
+		/* --|----|--CenterFreq1--P----A-- */
+		i4DeltaBw = prChannelInfo->u2PriChnlFreq
+			- prChannelInfo->u4CenterFreq1;
+		u4AndOneSCO = CHNL_EXT_SCB;
+		eSCO = CHNL_EXT_SCA;
+		if (i4DeltaBw < 0) {
+			/* --|----|--CenterFreq1--|----|-- */
+			/* --P----A--CenterFreq1--|----|-- */
+			/* --B----P--CenterFreq1--|----|-- */
+			u4AndOneSCO = CHNL_EXT_SCA;
+			eSCO = CHNL_EXT_SCB;
+			i4DeltaBw = -i4DeltaBw;
+		}
+		i4DeltaBw = i4DeltaBw - (CHANNEL_SPAN_20 >> 1);
+		if ((i4DeltaBw/CHANNEL_SPAN_20) & 1)
+			eSCO = u4AndOneSCO;
+	}
+
+	return eSCO;
+}
+
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief: Get AP channel number of Channel Center Frequency Segment 0
@@ -1366,3 +1362,74 @@ uint8_t rlmGetVhtS1ForAP(struct ADAPTER *prAdapter,
 	return ucFreq1Channel;
 }
 
+#if CFG_SUPPORT_P2P_CSA
+void rlmGetChnlInfoForCSA(struct ADAPTER *prAdapter,
+	IN uint8_t ucCh,
+	IN uint8_t ucBssIdx,
+	OUT struct RF_CHANNEL_INFO *prRfChnlInfo)
+{
+	struct BSS_INFO *prBssInfo = NULL;
+	enum ENUM_BAND eBandOrig;
+	enum ENUM_BAND eBandCsa;
+	uint8_t ucPrimaryChnlOrig;
+	uint8_t ucCsaChnlS1 = 0;
+	uint8_t fgDomainValid;
+
+	prBssInfo = prAdapter->aprBssInfo[ucBssIdx];
+
+	if (!prBssInfo)
+		return;
+
+	eBandOrig = prBssInfo->eBand;
+	ucPrimaryChnlOrig = prBssInfo->ucPrimaryChannel;
+
+	eBandCsa = (ucCh <= 14) ? BAND_2G4 : BAND_5G;
+	prRfChnlInfo->eBand = eBandCsa;
+	prRfChnlInfo->ucChannelNum = ucCh;
+
+	/* temp replace BSS eBand/channel
+	 * to get BW of CSA band
+	 */
+	prBssInfo->eBand = eBandCsa;
+	prBssInfo->ucPrimaryChannel = ucCh;
+	prRfChnlInfo->ucChannelNum = ucCh;
+	prRfChnlInfo->ucChnlBw =
+		cnmGetBssMaxBw(prAdapter, ucBssIdx);
+
+	/* restore */
+	prBssInfo->eBand = eBandOrig;
+	prBssInfo->ucPrimaryChannel = ucPrimaryChnlOrig;
+
+	prRfChnlInfo->u2PriChnlFreq =
+		nicChannelNum2Freq(ucCh) / 1000;
+	ucCsaChnlS1 = nicGetVhtS1(ucCh,
+		rlmGetVhtOpBwByBssOpBw(prRfChnlInfo->ucChnlBw));
+	prRfChnlInfo->u4CenterFreq1 = (ucCsaChnlS1 != 0)
+		? (nicChannelNum2Freq(ucCsaChnlS1) / 1000) :
+		prRfChnlInfo->u2PriChnlFreq;
+	prRfChnlInfo->u4CenterFreq2 = 0;
+
+	/* check domain info valid */
+	fgDomainValid = rlmDomainIsValidRfSetting(
+		prAdapter,
+		eBandCsa,
+		ucCh,
+		rlmGetScoByChnInfo(prAdapter, prRfChnlInfo),
+		(prRfChnlInfo->ucChnlBw == CW_20_40MHZ) ?
+			CW_20_40MHZ :
+			(prRfChnlInfo->ucChnlBw - 1),
+		nicFreq2ChannelNum(
+				prRfChnlInfo->u4CenterFreq1 * 1000),
+		nicFreq2ChannelNum(
+				prRfChnlInfo->u4CenterFreq2 * 1000));
+
+	if (fgDomainValid == FALSE) {
+		DBGLOG(P2P, WARN,
+			"fgDomainValid: FALSE, set to default\n");
+		/*Error Handling - Fixed to set 20MHz */
+		prRfChnlInfo->ucChnlBw = CW_20_40MHZ;
+		prRfChnlInfo->u4CenterFreq1 = 0;
+		prRfChnlInfo->u4CenterFreq2 = 0;
+	}
+}
+#endif

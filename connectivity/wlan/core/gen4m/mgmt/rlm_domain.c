@@ -1385,7 +1385,7 @@ rlmDomainGetChnlList(struct ADAPTER *prAdapter,
 
 				if (!kalIsValidChnl(prAdapter->prGlueInfo, ch,
 						prSubband->ucBand)) {
-					DBGLOG(RLM, INFO,
+					DBGLOG(RLM, TRACE,
 						   "Not support ch%d!\n", ch);
 					continue;
 				}
@@ -4269,7 +4269,7 @@ rlmDomainBuildCmdByDefaultTable(struct CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT
 
 			prCmd->ucNum++;
 
-			if (prCmd->ucNum > MAX_CMD_SUPPORT_CHANNEL_NUM) {
+			if (prCmd->ucNum >= MAX_CMD_SUPPORT_CHANNEL_NUM) {
 				DBGLOG(RLM, WARN,
 					"etype = %d, out of MAX CH Num\n",
 					eType);

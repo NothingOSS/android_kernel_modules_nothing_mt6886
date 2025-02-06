@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /******************************************************************************
 *[File]             usb.c
 *[Version]          v1.0
@@ -79,6 +33,20 @@
 #include <linux/mm.h>
 #ifndef CONFIG_X86
 #include <asm/memory.h>
+#endif
+#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_irq.h>
+#include <linux/of_gpio.h>
+
+#if CFG_CHIP_RESET_USE_DTS_GPIO_NUM
+#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_irq.h>
+#include <linux/of_gpio.h>
+#endif
+#if CFG_ENABLE_GKI_SUPPORT
+#include <linux/gpio.h>
 #endif
 
 #include "mt66xx_reg.h"
@@ -435,6 +403,11 @@ u_int8_t mtk_usb_vendor_request(IN struct GLUE_INFO *prGlueInfo, IN uint8_t uEnd
 	if (in_interrupt()) {
 		DBGLOG(REQ, ERROR, "BUG: mtk_usb_vendor_request is called from invalid context\n");
 		return FALSE;
+	}
+
+	if (prHifInfo == NULL) {
+		DBGLOG(REQ, WARN, "prHifInfo = NULL\n");
+		return -EINVAL;
 	}
 
 	mutex_lock(&prHifInfo->vendor_req_sem);
@@ -879,6 +852,13 @@ void glSetHifInfo(struct GLUE_INFO *prGlueInfo, unsigned long ulCookie)
 #if CFG_USB_TX_AGG
 	uint8_t ucTc;
 #endif
+#if CFG_CHIP_RESET_SUPPORT
+	struct mt66xx_chip_info *prChipInfo = NULL;
+	struct BUS_INFO *prBusInfo = NULL;
+
+	prChipInfo = prGlueInfo->prAdapter->chip_info;
+	prBusInfo = prChipInfo->bus_info;
+#endif
 
 	prHifInfo->eEventEpType = USB_EVENT_TYPE;
 	prHifInfo->fgEventEpDetected = FALSE;
@@ -1104,6 +1084,7 @@ void glSetHifInfo(struct GLUE_INFO *prGlueInfo, unsigned long ulCookie)
 
 	glUsbSetState(prHifInfo, USB_STATE_READY);
 	prGlueInfo->u4InfType = MT_DEV_INF_USB;
+	prBusInfo->ucVndReqToMcuFailCnt = 0;
 
 	return;
 
@@ -1129,104 +1110,143 @@ void glClearHifInfo(struct GLUE_INFO *prGlueInfo)
 #if CFG_USB_TX_AGG
 	uint8_t ucTc;
 #endif
-	struct USB_REQ *prUsbReq, *prUsbReqNext;
-	struct GL_HIF_INFO *prHifInfo = &prGlueInfo->rHifInfo;
+	struct USB_REQ *prUsbReq = NULL, *prUsbReqNext = NULL;
+	struct GL_HIF_INFO *prHifInfo = NULL;
+
+	if (prGlueInfo == NULL) {
+		DBGLOG(HAL, ERROR, "prGlueInfo == NULL\n");
+		return;
+	}
+
+	prHifInfo = &prGlueInfo->rHifInfo;
+	if (prHifInfo == NULL) {
+		DBGLOG(HAL, ERROR, "prHifInfo == NULL\n");
+		return;
+	}
 
 #if CFG_USB_TX_AGG
 	for (ucTc = 0; ucTc < USB_TC_NUM; ++ucTc) {
 		if (ucTc >= TC4_INDEX && ucTc < USB_DBDC1_TC)
 			continue;
 		list_for_each_entry_safe(prUsbReq, prUsbReqNext, &prHifInfo->rTxDataFreeQ[ucTc], list) {
+			if (prUsbReq->prBufCtrl != NULL) {
 #if CFG_USB_CONSISTENT_DMA
-			usb_free_coherent(prHifInfo->udev, USB_TX_DATA_BUFF_SIZE,
-				prUsbReq->prBufCtrl->pucBuf, prUsbReq->prUrb->transfer_dma);
+				usb_free_coherent(prHifInfo->udev,
+					USB_TX_DATA_BUFF_SIZE,
+					prUsbReq->prBufCtrl->pucBuf,
+					prUsbReq->prUrb->transfer_dma);
 #else
 #ifndef CFG_PREALLOC_MEMORY
-			kfree(prUsbReq->prBufCtrl->pucBuf);
+				kfree(prUsbReq->prBufCtrl->pucBuf);
 #endif
 #endif
+			}
 			usb_free_urb(prUsbReq->prUrb);
 		}
 	}
 #else
 	list_for_each_entry_safe(prUsbReq, prUsbReqNext, &prHifInfo->rTxDataFreeQ, list) {
+		if (prUsbReq->prBufCtrl != NULL) {
 #if CFG_USB_CONSISTENT_DMA
-		usb_free_coherent(prHifInfo->udev, USB_TX_DATA_BUFF_SIZE,
-			prUsbReq->prBufCtrl->pucBuf, prUsbReq->prUrb->transfer_dma);
+			usb_free_coherent(prHifInfo->udev,
+				USB_TX_DATA_BUFF_SIZE,
+				prUsbReq->prBufCtrl->pucBuf,
+				prUsbReq->prUrb->transfer_dma);
 #else
 #ifndef CFG_PREALLOC_MEMORY
-		kfree(prUsbReq->prBufCtrl->pucBuf);
+			kfree(prUsbReq->prBufCtrl->pucBuf);
 #endif
 #endif
+		}
 		usb_free_urb(prUsbReq->prUrb);
 	}
 #endif
 
 	list_for_each_entry_safe(prUsbReq, prUsbReqNext, &prHifInfo->rTxDataFfaQ, list) {
+		if (prUsbReq->prBufCtrl != NULL) {
 #if CFG_USB_CONSISTENT_DMA
-		usb_free_coherent(prHifInfo->udev, USB_TX_DATA_BUFF_SIZE,
-			prUsbReq->prBufCtrl->pucBuf, prUsbReq->prUrb->transfer_dma);
+			usb_free_coherent(prHifInfo->udev,
+					USB_TX_DATA_BUFF_SIZE,
+					prUsbReq->prBufCtrl->pucBuf,
+					prUsbReq->prUrb->transfer_dma);
 #else
 #ifndef CFG_PREALLOC_MEMORY
-		kfree(prUsbReq->prBufCtrl->pucBuf);
+			kfree(prUsbReq->prBufCtrl->pucBuf);
 #endif
 #endif
+		}
 		usb_free_urb(prUsbReq->prUrb);
 	}
 
 	list_for_each_entry_safe(prUsbReq, prUsbReqNext, &prHifInfo->rTxCmdFreeQ, list) {
+		if (prUsbReq->prBufCtrl != NULL) {
 #if CFG_USB_CONSISTENT_DMA
-		usb_free_coherent(prHifInfo->udev, USB_TX_CMD_BUF_SIZE,
-			prUsbReq->prBufCtrl->pucBuf, prUsbReq->prUrb->transfer_dma);
+			usb_free_coherent(prHifInfo->udev,
+					USB_TX_CMD_BUF_SIZE,
+					prUsbReq->prBufCtrl->pucBuf,
+					prUsbReq->prUrb->transfer_dma);
 #else
 #ifndef CFG_PREALLOC_MEMORY
-		kfree(prUsbReq->prBufCtrl->pucBuf);
+			kfree(prUsbReq->prBufCtrl->pucBuf);
 #endif
 #endif
+		}
 		usb_free_urb(prUsbReq->prUrb);
 	}
 
 	list_for_each_entry_safe(prUsbReq, prUsbReqNext, &prHifInfo->rTxCmdCompleteQ, list) {
+		if (prUsbReq->prBufCtrl != NULL) {
 #if CFG_USB_CONSISTENT_DMA
-		usb_free_coherent(prHifInfo->udev, USB_TX_CMD_BUF_SIZE,
-			prUsbReq->prBufCtrl->pucBuf, prUsbReq->prUrb->transfer_dma);
+			usb_free_coherent(prHifInfo->udev,
+					USB_TX_CMD_BUF_SIZE,
+					prUsbReq->prBufCtrl->pucBuf,
+					prUsbReq->prUrb->transfer_dma);
 #else
-		kfree(prUsbReq->prBufCtrl->pucBuf);
+			kfree(prUsbReq->prBufCtrl->pucBuf);
 #endif
+		}
 		usb_free_urb(prUsbReq->prUrb);
 	}
 
 	list_for_each_entry_safe(prUsbReq, prUsbReqNext, &prHifInfo->rTxDataCompleteQ, list) {
+		if (prUsbReq->prBufCtrl != NULL) {
 #if CFG_USB_CONSISTENT_DMA
-		usb_free_coherent(prHifInfo->udev, USB_TX_CMD_BUF_SIZE,
-			prUsbReq->prBufCtrl->pucBuf, prUsbReq->prUrb->transfer_dma);
+			usb_free_coherent(prHifInfo->udev,
+					USB_TX_CMD_BUF_SIZE,
+					prUsbReq->prBufCtrl->pucBuf,
+					prUsbReq->prUrb->transfer_dma);
 #else
-		kfree(prUsbReq->prBufCtrl->pucBuf);
+			kfree(prUsbReq->prBufCtrl->pucBuf);
 #endif
+		}
 		usb_free_urb(prUsbReq->prUrb);
 	}
 
 	list_for_each_entry_safe(prUsbReq, prUsbReqNext, &prHifInfo->rRxDataFreeQ, list) {
 #ifndef CFG_PREALLOC_MEMORY
-		kfree(prUsbReq->prBufCtrl->pucBuf);
+		if (prUsbReq->prBufCtrl != NULL)
+			kfree(prUsbReq->prBufCtrl->pucBuf);
 #endif
 		usb_free_urb(prUsbReq->prUrb);
 	}
 
 	list_for_each_entry_safe(prUsbReq, prUsbReqNext, &prHifInfo->rRxEventFreeQ, list) {
 #ifndef CFG_PREALLOC_MEMORY
-		kfree(prUsbReq->prBufCtrl->pucBuf);
+		if (prUsbReq->prBufCtrl != NULL)
+			kfree(prUsbReq->prBufCtrl->pucBuf);
 #endif
 		usb_free_urb(prUsbReq->prUrb);
 	}
 
 	list_for_each_entry_safe(prUsbReq, prUsbReqNext, &prHifInfo->rRxDataCompleteQ, list) {
-		kfree(prUsbReq->prBufCtrl->pucBuf);
+		if (prUsbReq->prBufCtrl != NULL)
+			kfree(prUsbReq->prBufCtrl->pucBuf);
 		usb_free_urb(prUsbReq->prUrb);
 	}
 
 	list_for_each_entry_safe(prUsbReq, prUsbReqNext, &prHifInfo->rRxEventCompleteQ, list) {
-		kfree(prUsbReq->prBufCtrl->pucBuf);
+		if (prUsbReq->prBufCtrl != NULL)
+			kfree(prUsbReq->prBufCtrl->pucBuf);
 		usb_free_urb(prUsbReq->prUrb);
 	}
 
@@ -1396,13 +1416,38 @@ int32_t glGetUsbDeviceSerialNumber(struct usb_device *dev, uint8_t *buffer, uint
 /*----------------------------------------------------------------------------*/
 u_int8_t kalDevRegRead(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Register, OUT uint32_t *pu4Value)
 {
+	struct BUS_INFO *prBusInfo = NULL;
 	int ret = 0;
 	uint8_t ucRetryCount = 0;
+	uint8_t ucTotalFailCnt = 0;
 
 	ASSERT(prGlueInfo);
 	ASSERT(pu4Value);
 
+	if (prGlueInfo->prAdapter == NULL) {
+		DBGLOG(HAL, ERROR, "prGlueInfo is NULL\n");
+		return FALSE;
+	}
+
+	prBusInfo = prGlueInfo->prAdapter->chip_info->bus_info;
 	*pu4Value = 0xFFFFFFFF;
+
+	ucTotalFailCnt = prBusInfo->ucVndReqToMcuFailCnt;
+
+	if (ucTotalFailCnt == VND_REQ_FAIL_TH) {
+		prBusInfo->ucVndReqToMcuFailCnt++;
+		DBGLOG(HAL, ERROR, "vendor reqs keep failure over %d times\n",
+		       ucTotalFailCnt);
+		if (kalIsResetting() == FALSE) {
+			glGetRstReason(RST_CMD_EVT_FAIL);
+			GL_RESET_TRIGGER(prGlueInfo->prAdapter,
+					RST_FLAG_CHIP_RESET);
+		}
+		return FALSE;
+	} else if (ucTotalFailCnt > VND_REQ_FAIL_TH) {
+		DBGLOG(HAL, TRACE, "ignore vendor reqs during reset\n");
+		return FALSE;
+	}
 
 	do {
 		ret = mtk_usb_vendor_request(prGlueInfo, 0, DEVICE_VENDOR_REQUEST_IN, VND_REQ_REG_READ,
@@ -1422,8 +1467,11 @@ u_int8_t kalDevRegRead(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Register, 
 		kalSendAeeWarning(HIF_USB_ERR_TITLE_STR,
 				  HIF_USB_ERR_DESC_STR "USB() reports error: %x retry: %u", ret, ucRetryCount);
 		DBGLOG(HAL, ERROR, "usb_readl() reports error: %x retry: %u\n", ret, ucRetryCount);
+		if (prBusInfo->ucVndReqToMcuFailCnt < VND_REQ_FAIL_TH)
+			prBusInfo->ucVndReqToMcuFailCnt++;
 	} else {
 		DBGLOG(HAL, INFO, "Get CR[0x%08x] value[0x%08x]\n", u4Register, *pu4Value);
+		prBusInfo->ucVndReqToMcuFailCnt = 0;
 	}
 
 	return (ret) ? FALSE : TRUE;
@@ -1445,8 +1493,34 @@ u_int8_t kalDevRegWrite(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Register,
 {
 	int ret = 0;
 	uint8_t ucRetryCount = 0;
+	struct BUS_INFO *prBusInfo = NULL;
+	uint8_t ucTotalFailCnt = 0;
 
 	ASSERT(prGlueInfo);
+
+	if (prGlueInfo->prAdapter == NULL) {
+		DBGLOG(HAL, ERROR, "prGlueInfo is NULL\n");
+		return FALSE;
+	}
+
+	prBusInfo = prGlueInfo->prAdapter->chip_info->bus_info;
+
+	ucTotalFailCnt = prBusInfo->ucVndReqToMcuFailCnt;
+
+	if (ucTotalFailCnt == VND_REQ_FAIL_TH) {
+		prBusInfo->ucVndReqToMcuFailCnt++;
+		DBGLOG(HAL, ERROR, "vendor reqs keep failure over %d times\n",
+		       VND_REQ_FAIL_TH);
+		if (kalIsResetting() == FALSE) {
+			glGetRstReason(RST_CMD_EVT_FAIL);
+			GL_RESET_TRIGGER(prGlueInfo->prAdapter,
+					RST_FLAG_CHIP_RESET);
+		}
+		return FALSE;
+	} else if (ucTotalFailCnt > VND_REQ_FAIL_TH) {
+		DBGLOG(HAL, TRACE, "ignore vendor reqs during reset\n");
+		return FALSE;
+	}
 
 	do {
 		ret = mtk_usb_vendor_request(prGlueInfo, 0, DEVICE_VENDOR_REQUEST_OUT, VND_REQ_REG_WRITE,
@@ -1466,8 +1540,11 @@ u_int8_t kalDevRegWrite(IN struct GLUE_INFO *prGlueInfo, IN uint32_t u4Register,
 		kalSendAeeWarning(HIF_USB_ERR_TITLE_STR,
 				  HIF_USB_ERR_DESC_STR "usb_writel() reports error: %x retry: %u", ret, ucRetryCount);
 		DBGLOG(HAL, ERROR, "usb_writel() reports error: %x retry: %u\n", ret, ucRetryCount);
+		if (prBusInfo->ucVndReqToMcuFailCnt < VND_REQ_FAIL_TH)
+			prBusInfo->ucVndReqToMcuFailCnt++;
 	} else {
 		DBGLOG(HAL, INFO, "Set CR[0x%08x] value[0x%08x]\n", u4Register, u4Value);
+		prBusInfo->ucVndReqToMcuFailCnt = 0;
 	}
 
 	return (ret) ? FALSE : TRUE;
@@ -1681,35 +1758,122 @@ void glGetHifDev(struct GL_HIF_INFO *prHif, struct device **dev)
 }
 
 #if CFG_CHIP_RESET_SUPPORT
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief perform whole chip reset operation
-* \You need set the reset pin low level and set it high level to
-* \reset 7663 chip; The operation will different in other platform;
-* \the following code is a example in mtk DTV platform.
-*
-* \param[in] prGlueInfo         Pointer to the GLUE_INFO_T structure.
-*/
-/*----------------------------------------------------------------------------*/
 void kalRemoveProbe(IN struct GLUE_INFO *prGlueInfo)
 {
-	typedef void (*func_ptr) (unsigned int gpio, int init_value);
+	uint32_t gpio_num, default_level, action_level, invert_time;
+#if CFG_CHIP_RESET_USE_DTS_GPIO_NUM
+	struct device_node *node;
+#endif
+#if CFG_ENABLE_GKI_SUPPORT
+	uint32_t i4Status;
+#else
+	typedef void (*gpioFunc) (unsigned int gpio, int init_value);
+	gpioFunc pFuncSetValue = NULL;
 	char *func_name = "mtk_gpio_set_value";
-	func_ptr pFunc = (func_ptr) kal_kallsyms_lookup_name(func_name);
-
-	if (!pFunc) {
-		DBGLOG(HAL, WARN, "[SER][L0]%s: No Exported Func Found [%s]\n",
-				__func__, func_name);
-	} else {
-		DBGLOG(HAL, INFO, "[SER][L0]%s: Invoke %s(%d,%d)\n", __func__,
-				func_name, WIFI_DONGLE_RESET_GPIO_PIN, 0);
-		pFunc(WIFI_DONGLE_RESET_GPIO_PIN, 0);
-		mdelay(RESET_PIN_SET_LOW_TIME);
-		DBGLOG(HAL, INFO, "[SER][L0]%s: Invoke %s(%d,%d)\n", __func__,
-				func_name, WIFI_DONGLE_RESET_GPIO_PIN, 1);
-		pFunc(WIFI_DONGLE_RESET_GPIO_PIN, 1);
-	}
-
-}
+#if CFG_CHIP_RESET_USE_MSTAR_GPIO_API
+	typedef void (*gpioMstarFunc)(uint32_t);
+	gpioMstarFunc pFuncSetLow = NULL;
+	gpioMstarFunc pFuncSetHigh = NULL;
+	char *func_name_L = "MDrv_GPIO_Set_Low";
+	char *func_name_H = "MDrv_GPIO_Set_High";
+#endif
 #endif
 
+#if CFG_CHIP_RESET_USE_DTS_GPIO_NUM
+	node = of_find_compatible_node(NULL,
+				       NULL,
+				       CHIP_RESET_DTS_COMPATIBLE_NAME);
+	if (!node) {
+		DBGLOG(HAL, ERROR,
+		       "[SER][L0]: Failed to find dts node: %s\n",
+		       CHIP_RESET_DTS_COMPATIBLE_NAME);
+		return;
+	}
+	if (of_property_read_u32(node, CHIP_RESET_GPIO_PROPERTY_NAME,
+				&gpio_num) != 0) {
+		DBGLOG(HAL, ERROR,
+		       "[SER][L0]: Failed to get gpio_num: %s\n",
+		       CHIP_RESET_GPIO_PROPERTY_NAME);
+		return;
+	}
+	if (of_property_read_u32(node, CHIP_RESET_INVERT_PROPERTY_NAME,
+				&invert_time) != 0) {
+		DBGLOG(HAL, WARN,
+		       "[SER][L0]: Failed to get invert_time: %s\n",
+		       CHIP_RESET_INVERT_PROPERTY_NAME);
+		invert_time = RESET_PIN_SET_LOW_TIME;
+	}
+	if (of_property_read_u32(node, CHIP_RESET_DEFAULT_VAL_PROPERTY_NAME,
+				&default_level) != 0) {
+		DBGLOG(HAL, WARN,
+		       "[SER][L0]: Failed to get default_level: %s\n",
+		       CHIP_RESET_DEFAULT_VAL_PROPERTY_NAME);
+		default_level = 1;
+	}
+	default_level = (default_level == 0) ? 0 : 1;
+	action_level = (default_level == 0) ? 1 : 0;
+#else
+	gpio_num = WIFI_DONGLE_RESET_GPIO_PIN;
+	invert_time = RESET_PIN_SET_LOW_TIME;
+	default_level = 1;
+	action_level = 0;
+#endif
+
+	DBGLOG(HAL, INFO,
+	       "[SER][L0]: wifi reset gpio %d pull %s %dms\n",
+	       gpio_num, (action_level == 0) ? "down" : "up", invert_time);
+
+#if CFG_ENABLE_GKI_SUPPORT
+	i4Status = gpio_request(gpio_num, "wifi-reset");
+	if (i4Status < 0) {
+		DBGLOG(HAL, ERROR,
+		       "[SER][L0]: gpio_request(%d,%s) %d failed\n",
+		       gpio_num, "wifi-reset", i4Status);
+		return;
+	}
+	i4Status = gpio_direction_output(gpio_num, action_level);
+	DBGLOG(HAL, WARN,
+	       "[SER][L0]: Invoke gpio_direction_output (%d, %d) %d\n",
+	       gpio_num, action_level, i4Status);
+	mdelay(invert_time);
+	i4Status = gpio_direction_output(gpio_num, default_level);
+	DBGLOG(HAL, WARN,
+	       "[SER][L0]: Invoke gpio_direction_output (%d, %d) %d\n",
+	       gpio_num, default_level, i4Status);
+	gpio_free(gpio_num);
+#else
+	pFuncSetValue = (gpioFunc)kal_kallsyms_lookup_name(func_name);
+	if (pFuncSetValue) {
+		DBGLOG(HAL, WARN, "[SER][L0]%s: Invoke %s(%d,%d)\n",
+		       __func__, func_name, gpio_num, action_level);
+		pFuncSetValue(gpio_num, action_level);
+		mdelay(invert_time);
+		DBGLOG(HAL, WARN, "[SER][L0]%s: Invoke %s(%d,%d)\n",
+		       __func__, func_name, gpio_num, default_level);
+		pFuncSetValue(gpio_num, default_level);
+		kal_kallsyms_put(func_name);
+		return;
+	}
+	DBGLOG(HAL, ERROR, "[SER][L0]%s: No Exported Func Found [%s]\n",
+	       __func__, func_name);
+
+#if CFG_CHIP_RESET_USE_MSTAR_GPIO_API
+	pFuncSetLow = (gpioMstarFunc)kal_kallsyms_lookup_name(func_name_L);
+	pFuncSetHigh = (gpioMstarFunc)kal_kallsyms_lookup_name(func_name_H);
+
+	if (pFuncSetLow && pFuncSetHigh) {
+		DBGLOG(HAL, WARN, "[SER][L0]: Use mstar api %s and %s\n",
+		       func_name_L, func_name_H);
+		default_level ? pFuncSetLow(gpio_num) : pFuncSetHigh(gpio_num);
+		mdelay(invert_time);
+		default_level ? pFuncSetHigh(gpio_num) : pFuncSetLow(gpio_num);
+		kal_kallsyms_put(func_name_H);
+		kal_kallsyms_put(func_name_L);
+		return;
+	}
+	DBGLOG(HAL, ERROR, "[SER][L0]: Failed to find api: %s or %s\n",
+	       func_name_L, func_name_H);
+#endif
+#endif
+}
+#endif

@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
 ** Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/mgmt/rlm_domain.c#2
 */
@@ -2510,9 +2464,11 @@ uint16_t rlmDomainPwrLimitDefaultTableDecision(struct ADAPTER *prAdapter, uint16
 /*----------------------------------------------------------------------------*/
 void rlmDomainBuildCmdByDefaultTable(struct CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT *prCmd, uint16_t u2DefaultTableIndex)
 {
-	uint8_t i, k;
+	uint8_t i, k, j;
 	struct COUNTRY_POWER_LIMIT_TABLE_DEFAULT *prPwrLimitSubBand;
 	struct CMD_CHANNEL_POWER_LIMIT *prCmdPwrLimit;
+	int8_t cLmtBand = 0;
+	int8_t *picPwrLmt;
 
 	prCmdPwrLimit = &prCmd->rChannelPowerLimit[0];
 	prPwrLimitSubBand = &g_rRlmPowerLimitDefault[u2DefaultTableIndex];
@@ -2521,12 +2477,19 @@ void rlmDomainBuildCmdByDefaultTable(struct CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT 
 
 	for (i = POWER_LIMIT_2G4; i < POWER_LIMIT_SUBAND_NUM; i++) {
 		if (prPwrLimitSubBand->aucPwrLimitSubBand[i] < MAX_TX_POWER) {
-			for (k = g_rRlmSubBand[i].ucStartCh; k <= g_rRlmSubBand[i].ucEndCh;
-			     k += g_rRlmSubBand[i].ucInterval) {
+			for (k = g_rRlmSubBand[i].ucStartCh;
+					k <= g_rRlmSubBand[i].ucEndCh;
+					k += g_rRlmSubBand[i].ucInterval) {
+				 /* cLmtBand need reset by each channel */
+				cLmtBand =
+					prPwrLimitSubBand->
+					aucPwrLimitSubBand[i];
 				if ((prPwrLimitSubBand->ucPwrUnit & BIT(i)) == 0) {
 					prCmdPwrLimit->ucCentralCh = k;
-					kalMemSet(&prCmdPwrLimit->cPwrLimitCCK,
-						  prPwrLimitSubBand->aucPwrLimitSubBand[i], PWR_LIMIT_NUM);
+					picPwrLmt =
+						&prCmdPwrLimit->cPwrLimitCCK;
+					for (j = 0; j < PWR_LIMIT_NUM; j++)
+						*(picPwrLmt + j) = cLmtBand;
 				} else {
 					/* ex:    40MHz power limit(mW\MHz) = 20MHz power limit(mW\MHz) * 2
 					 * ---> 40MHz power limit(dBm) = 20MHz power limit(dBm) + 6;
@@ -2578,6 +2541,25 @@ void rlmDomainBuildCmdByDefaultTable(struct CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT 
 	}
 }
 
+static void PwrLmtTblArbitrator(int8_t *target,
+	int8_t *compare,
+	uint32_t size)
+{
+	uint8_t i = 0;
+
+	/* Choose min value from target & compare */
+	for (i = 0; i < size; i++) {
+		if (target[i] > compare[i])
+			target[i] = compare[i];
+
+		/* Sanity check power boundary */
+		if (target[i] > MAX_TX_POWER)
+			target[i] = MAX_TX_POWER;
+		else if (target[i] < MIN_TX_POWER)
+			target[i] = MIN_TX_POWER;
+	}
+}
+
 /*----------------------------------------------------------------------------*/
 /*!
 * @brief Fill power limit CMD by Power Limit Configurartion Table(Bandedge and Customization)
@@ -2589,6 +2571,7 @@ void rlmDomainBuildCmdByDefaultTable(struct CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT 
 	/*----------------------------------------------------------------------------*/
 void rlmDomainBuildCmdByConfigTable(struct ADAPTER *prAdapter, struct CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT *prCmd)
 {
+#define PwrLmtConf g_rRlmPowerLimitConfiguration
 	uint8_t i, k;
 	uint16_t u2CountryCodeTable = COUNTRY_CODE_NULL;
 	struct CMD_CHANNEL_POWER_LIMIT *prCmdPwrLimit;
@@ -2598,10 +2581,13 @@ void rlmDomainBuildCmdByConfigTable(struct ADAPTER *prAdapter, struct CMD_SET_CO
 
 	for (i = 0; i < sizeof(g_rRlmPowerLimitConfiguration) / sizeof(struct COUNTRY_POWER_LIMIT_TABLE_CONFIGURATION); i++) {
 
-		WLAN_GET_FIELD_BE16(&g_rRlmPowerLimitConfiguration[i].aucCountryCode[0], &u2CountryCodeTable);
+		WLAN_GET_FIELD_BE16(
+			&PwrLmtConf[i].aucCountryCode[0],
+			&u2CountryCodeTable);
 
 		fgChannelValid =
-		    rlmDomainCheckChannelEntryValid(prAdapter, g_rRlmPowerLimitConfiguration[i].ucCentralCh);
+		    rlmDomainCheckChannelEntryValid(prAdapter,
+		    PwrLmtConf[i].ucCentralCh);
 
 		if (u2CountryCodeTable == COUNTRY_CODE_NULL) {
 			break;	/*end of configuration table */
@@ -2612,7 +2598,7 @@ void rlmDomainBuildCmdByConfigTable(struct ADAPTER *prAdapter, struct CMD_SET_CO
 			if (prCmd->ucNum != 0) {
 				for (k = 0; k < prCmd->ucNum; k++) {
 					if (prCmdPwrLimit->ucCentralCh ==
-								g_rRlmPowerLimitConfiguration[i].ucCentralCh) {
+						PwrLmtConf[i].ucCentralCh) {
 
 						/*Cmd setting (Default table information) and
 						 *  Configuration table has repetition channel entry,
@@ -2622,9 +2608,11 @@ void rlmDomainBuildCmdByConfigTable(struct ADAPTER *prAdapter, struct CMD_SET_CO
 						 *  ch 1 = 22 dBm
 						 *  Cmd final setting -->  ch1 = 22dBm, ch2~14 = 20dBm
 						 */
-						kalMemCopy(&prCmdPwrLimit->cPwrLimitCCK,
-							   &g_rRlmPowerLimitConfiguration[i].aucPwrLimit,
-							   PWR_LIMIT_NUM);
+						PwrLmtTblArbitrator(
+						&prCmdPwrLimit->cPwrLimitCCK,
+						&PwrLmtConf[i].
+							aucPwrLimit[0],
+						PWR_LIMIT_NUM);
 
 						DBGLOG(RLM, LOUD,
 						       "Domain: CC=%c%c,ReplaceCh=%d,Limit=%d,%d,%d,%d,%d,%d,%d,%d,%d,Fg=%d\n",
@@ -2650,9 +2638,13 @@ void rlmDomainBuildCmdByConfigTable(struct ADAPTER *prAdapter, struct CMD_SET_CO
 					 *  ch 36 = 22 dBm
 					 *  Cmd final setting -->  ch1~14 = 20dBm, ch36 = 22dBm
 					 */
-					prCmdPwrLimit->ucCentralCh = g_rRlmPowerLimitConfiguration[i].ucCentralCh;
-					kalMemCopy(&prCmdPwrLimit->cPwrLimitCCK,
-						   &g_rRlmPowerLimitConfiguration[i].aucPwrLimit, PWR_LIMIT_NUM);
+					prCmdPwrLimit->ucCentralCh =
+						PwrLmtConf[i].ucCentralCh;
+					PwrLmtTblArbitrator(
+					&prCmdPwrLimit->cPwrLimitCCK,
+					&PwrLmtConf[i].
+						aucPwrLimit[0],
+					PWR_LIMIT_NUM);
 					prCmd->ucNum++; /*Add this channel setting in rChannelPowerLimit[k]*/
 
 					DBGLOG(RLM, LOUD,
@@ -2675,9 +2667,13 @@ void rlmDomainBuildCmdByConfigTable(struct ADAPTER *prAdapter, struct CMD_SET_CO
 				 *  ch 36 = 22 dBm
 				 *  Cmd final setting -->  ch36 = 22dBm
 				 */
-				prCmdPwrLimit->ucCentralCh = g_rRlmPowerLimitConfiguration[i].ucCentralCh;
-				kalMemCopy(&prCmdPwrLimit->cPwrLimitCCK, &g_rRlmPowerLimitConfiguration[i].aucPwrLimit,
-					   PWR_LIMIT_NUM);
+				prCmdPwrLimit->ucCentralCh =
+					PwrLmtConf[i].ucCentralCh;
+				PwrLmtTblArbitrator(
+					&prCmdPwrLimit->cPwrLimitCCK,
+					&PwrLmtConf[i].
+						aucPwrLimit[0],
+					PWR_LIMIT_NUM);
 				prCmd->ucNum++; /*Add this channel setting in rChannelPowerLimit[k]*/
 
 				DBGLOG(RLM, LOUD, "Domain: Default table power limit value are max on all subbands.\n");
@@ -2693,6 +2689,7 @@ void rlmDomainBuildCmdByConfigTable(struct ADAPTER *prAdapter, struct CMD_SET_CO
 			}
 		}
 	}
+#undef PwrLmtConf
 }
 
 struct TX_PWR_LIMIT_DATA *
@@ -3801,7 +3798,53 @@ uint8_t rlmDomainGetChannelBw(uint8_t channelNum)
 	DBGLOG(RLM, INFO, "ch=%d, BW=%d\n", channelNum, channelBw);
 	return channelBw;
 }
-#endif
+
+#if (CFG_SUPPORT_CFG80211_AUTH == 1 && CFG_SUPPORT_CFG80211_QUEUE == 1)
+void rlmDomainRegSetAddToQueue(IN struct wiphy *pWiphy,
+			IN struct regulatory_request *pRequest)
+{
+	struct PARAM_CFG80211_REQ *prCfg80211Req = NULL;
+	struct GLUE_INFO *prGlueInfo = NULL;
+	struct net_device *prDev = gPrDev;
+
+	GLUE_SPIN_LOCK_DECLARATION();
+
+	prGlueInfo = (prDev != NULL) ? *((struct GLUE_INFO **)
+					 netdev_priv(prDev)) : NULL;
+	if (!prGlueInfo) {
+		DBGLOG(SCN, INFO, "prGlueInfo == NULL unexpected\n");
+		return;
+	}
+
+	DBGLOG(REQ, INFO, "switch cfg80211 workq from main_thread\n");
+
+	prCfg80211Req = (struct PARAM_CFG80211_REQ *) kalMemAlloc(
+			sizeof(struct PARAM_CFG80211_REQ), PHY_MEM_TYPE);
+	DBGLOG(REQ, TRACE, "Alloc prCfg80211Req %p\n", prCfg80211Req);
+
+	if (prCfg80211Req == NULL) {
+		DBGLOG(REQ, ERROR, "prCfg80211Req Alloc Failed\n");
+		return;
+	}
+
+	/* just use cfg80211 queue to set reg */
+	prCfg80211Req->prFrame = NULL;
+	prCfg80211Req->ucFlagTx = REG_SET;
+	prCfg80211Req->pWiphy = pWiphy;
+	kalMemCopy(&prCfg80211Req->request, pRequest,
+		sizeof(prCfg80211Req->request));
+
+	GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_CFG80211_QUE);
+	QUEUE_INSERT_TAIL(&prGlueInfo->prAdapter->rCfg80211Queue,
+				&prCfg80211Req->rQueEntry);
+	GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_CFG80211_QUE);
+
+	if (!schedule_delayed_work(&cfg80211_workq, 0))
+		DBGLOG(REQ, INFO, "work is already in cfg80211_workq\n");
+
+}
+#endif /* CFG_SUPPORT_CFG80211_QUEUE & CFG_SUPPORT_CFG80211_AUTH */
+#endif /* CFG_SUPPORT_SINGLE_SKU */
 
 uint32_t rlmDomainExtractSingleSkuInfoFromFirmware(IN struct ADAPTER *prAdapter, IN uint8_t *pucEventBuf)
 {
@@ -3915,7 +3958,7 @@ void rlmDomainOidSetCountry(IN struct ADAPTER *prAdapter, char *country, u8 size
 	if (rlmDomainIsUsingLocalRegDomainDataBase()) {
 		rlmDomainSetTempCountryCode(country, size_of_country);
 		request.initiator = NL80211_REGDOM_SET_BY_DRIVER;
-		mtk_reg_notify(priv_to_wiphy(prAdapter->prGlueInfo), &request);
+		schedule_delayed_work(&reg_set_workq, 0);
 	} else {
 		DBGLOG(RLM, INFO, "%s(): Using driver hint to query CRDA getting regd.\n", __func__);
 		regulatory_hint(priv_to_wiphy(prAdapter->prGlueInfo), country);

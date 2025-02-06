@@ -184,6 +184,25 @@ static struct clk *clk_infracfg_ao_ccif4_ap_cg_mt6835;       /* For direct path 
 
 /* PMIC part */
 #if CONSYS_PMIC_CTRL_ENABLE
+/*
+ *---------------------------------------------------------------
+ * adie \ pmic  |  mt6363 + mt6368    |   mt6377                 |
+ *---------------------------------------------------------------|
+ *              |  vrfio18   1.8 V    |  vcn18    1.8 V          |
+ *   mt6631     |  vcn33_1   3.3 V    |  vcn33_1  3.3 V          |
+ *              |  vcn33_2   2.8 V    |  vcn33_2  2.8 V          |
+ *---------------------------------------------------------------|
+ *              |  vcn13     1.3 V    |  vcn13    1.37V(ext. LDO)|
+ *   mt6635     |  vrfio18   1.8 V    |  vcn18    1.8 V          |
+ *              |  vcn33_1   3.3 V    |  vcn33_1  3.3 V          |
+ *---------------------------------------------------------------|
+ *              |  vcn13     1.35 V   |  vcn13    1.37V(ext. LDO)|
+ *   mt6637     |  vrfio18   1.7  V   |  vcn18    1.7 V          |
+ *              |  vcn33_1   3.3  V   |  vcn33_1  3.3 V          |
+ *              |  vcn33_2   2.8  V   |  vcn33_2  2.8 V          |
+ *---------------------------------------------------------------
+*/
+
 static struct regmap *g_regmap_mt6363;
 static struct regmap *g_regmap_mt6368;
 static struct regmap *g_regmap_mt6377;
@@ -1283,14 +1302,18 @@ static VOID consys_hw_vcn13_secondary_rc_mode_enable(VOID)
 {
 	struct regmap *r = g_regmap_mt6363;
 	int ret = 0;
+	int adie_chipid = mtk_wcn_consys_get_adie_chipid();
+	int vol = 1300000;
 
 	/* 1. set PMIC VCN13 LDO PMIC HW mode control by PMRC_EN[9][8][7][6] */
 	/* 2. set PMIC VCN13 LDO op_mode = 0 */
 	/* 3. set PMIC VCN13 LDO SW_OP_EN = 1, SW_EN = 1, SW_LP =0 (sw enable & normal mode)*/
 	/* 4. set PMIC VCN13 LDO HW_OP_EN = 1, HW_OP_CFG = 0 */
 	if (reg_VCN13) {
+		if (adie_chipid == TERTIARY_ADIE)
+			vol = 1350000;
 		/* set PMIC VCN13 LDO 1.3V */
-		regulator_set_voltage(reg_VCN13, 1300000, 1300000);
+		regulator_set_voltage(reg_VCN13, vol, vol);
 		/* set PMIC VCN13 LDO SW_OP_EN = 1, SW_EN = 1, SW_LP = 0 (sw enable & normal mode) */
 		regulator_set_mode(reg_VCN13, REGULATOR_MODE_NORMAL); /* SW_LP = 0 */
 		ret = regulator_enable(reg_VCN13); /* SW_EN = 1 */
@@ -1456,6 +1479,7 @@ static INT32 consys_hw_vcn18_ctrl(MTK_WCN_BOOL enable)
 	struct regmap *r1 = g_regmap_mt6377;
 	struct regmap *r2 = g_regmap_mt6363;
 	int ret = 0;
+	int adie_chipid = mtk_wcn_consys_get_adie_chipid();
 
 	if (r2)
 		consys_update_vs2_voter();
@@ -1469,7 +1493,12 @@ static INT32 consys_hw_vcn18_ctrl(MTK_WCN_BOOL enable)
 			/* 4. set PMIC VRFIO18 LDO HW_OP_EN = 1, HW_OP_CFG = 0 */
 			if (reg_VCN18) {
 				/* set PMIC VRFIO18 LDO 1.8V */
-				regulator_set_voltage(reg_VCN18, 1800000, 1800000);
+				if (adie_chipid == TERTIARY_ADIE) {
+					regulator_set_voltage(reg_VCN18, 1700000, 1700000);
+					WMT_PLAT_PR_INFO("adjust vcn18 to 1.7V\n");
+				} else
+					regulator_set_voltage(reg_VCN18, 1800000, 1800000);
+
 				/* set PMIC VRFIO18 LDO SW_OP_EN = 1, SW_EN = 1, SW_LP = 0 (sw enable & normal mode) */
 				regulator_set_mode(reg_VCN18, REGULATOR_MODE_NORMAL); /* SW_LP = 0 */
 				ret = regulator_enable(reg_VCN18); /* SW_EN = 1 */
@@ -1553,14 +1582,15 @@ static INT32 consys_hw_vcn18_ctrl(MTK_WCN_BOOL enable)
 					0 << MT6363_RG_LDO_VRFIO18_RC6_OP_SHIFT);
 			}
 
-			if (mtk_wcn_consys_get_adie_chipid() == PRIMARY_ADIE) {
+			if (adie_chipid == PRIMARY_ADIE) {
 				consys_hw_vcn33_primary_rc_mode_enable();
-			} else if (mtk_wcn_consys_get_adie_chipid() == SECONDARY_ADIE) {
+			} else {
 				if (r1)
 					consys_hw_vcn13_ctrl_mt6377(ENABLE);
 				else if (r2)
 					consys_hw_vcn13_secondary_rc_mode_enable();
-				consys_hw_vcn33_secondary_rc_mode_enable();
+				if (adie_chipid == SECONDARY_ADIE)
+					consys_hw_vcn33_secondary_rc_mode_enable();
 			}
 		} else {
 			/* Legacy mode */
@@ -1654,8 +1684,9 @@ static INT32 consys_hw_vcn28_ctrl(UINT32 enable)
 	struct regmap *r1 = g_regmap_mt6377;
 	struct regmap *r2 = g_regmap_mt6368;
 	int ret = 0;
+	int adie_chipid = mtk_wcn_consys_get_adie_chipid();
 
-	if (mtk_wcn_consys_get_adie_chipid() == SECONDARY_ADIE)
+	if (adie_chipid == SECONDARY_ADIE)
 		/* 6635 not supported */
 		return 0;
 
@@ -1676,15 +1707,18 @@ static INT32 consys_hw_vcn28_ctrl(UINT32 enable)
 		}
 
 		if (r1) {
-			regmap_update_bits(r1, MT6377_RG_LDO_VCN33_2_RC9_OP_MODE_ADDR,
-				1 << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT,
-				0 << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT);
-			regmap_update_bits(r1, MT6377_RG_LDO_VCN33_2_RC9_OP_EN_ADDR,
-				1 << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT,
-				enable << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT);
-			regmap_update_bits(r1, MT6377_RG_LDO_VCN33_2_RC9_OP_CFG_ADDR,
-				1 << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT,
-				0 << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT);
+			if (adie_chipid == PRIMARY_ADIE) {
+				regmap_update_bits(r1, MT6377_RG_LDO_VCN33_2_RC9_OP_MODE_ADDR,
+					1 << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT,
+					0 << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT);
+				regmap_update_bits(r1, MT6377_RG_LDO_VCN33_2_RC9_OP_EN_ADDR,
+					1 << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT,
+					enable << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT);
+				regmap_update_bits(r1, MT6377_RG_LDO_VCN33_2_RC9_OP_CFG_ADDR,
+					1 << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT,
+					0 << MT6377_RG_LDO_VCN33_2_RC9_OP_SHIFT);
+			}
+
 			regmap_update_bits(r1, MT6377_RG_LDO_VCN33_2_RC6_OP_MODE_ADDR,
 				1 << MT6377_RG_LDO_VCN33_2_RC6_OP_SHIFT,
 				0 << MT6377_RG_LDO_VCN33_2_RC6_OP_SHIFT);
@@ -1813,24 +1847,43 @@ static INT32 consys_update_pmic_voter(UINT32 enable)
 }
 #endif
 
+static INT32 consys_hw_vcn33_tertiary_rc_mode_ctrl(UINT32 enable)
+{
+	int ret = 0;
+
+	if (reg_VCN33_1 == NULL) {
+		WMT_PLAT_PR_INFO("reg_VCN33_1 is NULL\n");
+		return -1;
+	}
+
+	if (enable) {
+		consys_hw_vcn33_secondary_rc_mode_enable();
+		ret = regulator_enable(reg_VCN33_1);
+	} else
+		ret = regulator_disable(reg_VCN33_1);
+
+	WMT_PLAT_PR_INFO("enable = %u, ret = %d\n", enable, ret);
+	return ret;
+}
+
 static INT32 consys_hw_bt_vcn33_ctrl(UINT32 enable)
 {
 #if CONSYS_PMIC_CTRL_ENABLE
-	if (mtk_wcn_consys_get_adie_chipid() != SECONDARY_ADIE)
+	switch (mtk_wcn_consys_get_adie_chipid()) {
+	case PRIMARY_ADIE:
 		/* 6631 not supported */
-		return 0;
+		break;
 
-	consys_update_pmic_voter(enable);
+	case SECONDARY_ADIE:
+		consys_update_pmic_voter(enable);
+		if (consys_is_rc_mode_enable_mt6835() == 0)
+			consys_hw_wifi_bt_legacy_mode_vcn33_1_ctrl(enable);
+		break;
 
-	if (consys_is_rc_mode_enable_mt6835())
-		return 0;
-
-	if (enable) {
-		consys_hw_wifi_bt_legacy_mode_vcn33_1_ctrl(true);
-		WMT_PLAT_PR_DBG("WMT do BT PMIC on\n");
-	} else {
-		consys_hw_wifi_bt_legacy_mode_vcn33_1_ctrl(false);
-		WMT_PLAT_PR_DBG("WMT do BT PMIC off\n");
+	case TERTIARY_ADIE:
+		if (consys_is_rc_mode_enable_mt6835())
+			consys_hw_vcn33_tertiary_rc_mode_ctrl(enable);
+		break;
 	}
 #endif
 	return 0;
@@ -1839,19 +1892,20 @@ static INT32 consys_hw_bt_vcn33_ctrl(UINT32 enable)
 static INT32 consys_hw_wifi_vcn33_ctrl(UINT32 enable)
 {
 #if CONSYS_PMIC_CTRL_ENABLE
-	if (mtk_wcn_consys_get_adie_chipid() != SECONDARY_ADIE)
+	switch (mtk_wcn_consys_get_adie_chipid()) {
+	case PRIMARY_ADIE:
 		/* 6631 not supported */
-		return 0;
+		break;
 
-	if (consys_is_rc_mode_enable_mt6835())
-		return 0;
+	case SECONDARY_ADIE:
+		if (consys_is_rc_mode_enable_mt6835() == 0)
+			consys_hw_wifi_bt_legacy_mode_vcn33_1_ctrl(enable);
+		break;
 
-	if (enable) {
-		consys_hw_wifi_bt_legacy_mode_vcn33_1_ctrl(true);
-		WMT_PLAT_PR_DBG("WMT do WIFI PMIC on\n");
-	} else {
-		consys_hw_wifi_bt_legacy_mode_vcn33_1_ctrl(false);
-		WMT_PLAT_PR_DBG("WMT do WIFI PMIC off\n");
+	case TERTIARY_ADIE:
+		if (consys_is_rc_mode_enable_mt6835())
+			consys_hw_vcn33_tertiary_rc_mode_ctrl(enable);
+		break;
 	}
 #endif
 	return 0;
@@ -1860,20 +1914,27 @@ static INT32 consys_hw_wifi_vcn33_ctrl(UINT32 enable)
 static INT32 consys_hw_vcn_ctrl_after_idle(VOID)
 {
 #if CONSYS_PMIC_CTRL_ENABLE
-	if (consys_is_rc_mode_enable_mt6835()) {
-		/* set PMIC VRFIO18 LDO SW_OP_EN = 1, SW_EN = 1, SW_LP = 1 (sw ctrl into lp mode)*/
-		if (reg_VCN18)
-			regulator_set_mode(reg_VCN18, REGULATOR_MODE_IDLE); /* SW_LP = 1 */
+	if (consys_is_rc_mode_enable_mt6835() == 0)
+		return 0;
 
-		if (mtk_wcn_consys_get_adie_chipid() == PRIMARY_ADIE) {
-			/* set PMIC VCN33_1 LDO SW_OP_EN = 1, SW_EN = 1, SW_LP = 1 (sw ctrl into lp mode)*/
-			if (reg_VCN33_1)
-				regulator_set_mode(reg_VCN33_1, REGULATOR_MODE_IDLE); /* SW_LP = 1 */
-		} else {
-			/* set PMIC VCN13 LDO SW_OP_EN = 1, SW_EN = 1, SW_LP = 1 (sw ctrl into lp mode)*/
-			if (reg_VCN13)
-				regulator_set_mode(reg_VCN13, REGULATOR_MODE_IDLE); /* SW_LP = 1 */
-		}
+	if (reg_VCN18)
+		regulator_set_mode(reg_VCN18, REGULATOR_MODE_IDLE); /* SW_LP = 1 */
+
+	switch (mtk_wcn_consys_get_adie_chipid()) {
+	case PRIMARY_ADIE:
+		if (reg_VCN33_1)
+			regulator_set_mode(reg_VCN33_1, REGULATOR_MODE_IDLE); /* SW_LP = 1 */
+		break;
+
+	case SECONDARY_ADIE:
+		break;
+
+	case TERTIARY_ADIE:
+		if (reg_VCN33_1)
+			regulator_set_mode(reg_VCN33_1, REGULATOR_MODE_IDLE); /* SW_LP = 1 */
+		if (reg_VCN33_2)
+			regulator_set_mode(reg_VCN33_2, REGULATOR_MODE_IDLE); /* SW_LP = 1 */
+		break;
 	}
 #endif
 	return 0;
@@ -1901,7 +1962,7 @@ static UINT32 consys_emi_set_remapping_reg(VOID)
 	phys_addr_t mdPhy = 0;
 	INT32 size = 0;
 
-	if (mtk_wcn_consys_get_adie_chipid() != SECONDARY_ADIE)
+	if (mtk_wcn_consys_get_adie_chipid() == PRIMARY_ADIE)
 		mtk_wcn_emi_addr_info.emi_ap_phy_addr = gConEmiPhyBase;
 	else
 		mtk_wcn_emi_addr_info.emi_ap_phy_addr = gConEmiPhyBase + SECONDARY_ADIE_OFFSET;
@@ -2110,14 +2171,17 @@ static UINT32 consys_adie_chipid_checking_flow(UINT32 adie)
 
 #if CONSYS_PMIC_CTRL_ENABLE
 	if (reg_VCN18) {
-		regulator_set_voltage(reg_VCN18, 1800000, 1800000);
+		if (adie == TERTIARY_ADIE)
+			regulator_set_voltage(reg_VCN18, 1700000, 1700000);
+		else
+			regulator_set_voltage(reg_VCN18, 1800000, 1800000);
 		if (regulator_enable(reg_VCN18))
 			WMT_PLAT_PR_INFO("enable VCN18 fail\n");
 		else
 			WMT_PLAT_PR_DBG("enable VCN18 ok\n");
 	}
 	udelay(300);
-	if (adie == SECONDARY_ADIE) {
+	if (adie == SECONDARY_ADIE || adie == TERTIARY_ADIE) {
 		if (!reg_VCN13) {
 			consys_hw_vcn13_ctrl_mt6377(ENABLE);
 		} else {
@@ -2154,7 +2218,7 @@ static UINT32 consys_adie_chipid_checking_flow(UINT32 adie)
 
 	if (adie == PRIMARY_ADIE)
 		CONSYS_REG_WRITE(conn_rf_spi_base + SPI_TOP_ADDR, 0x0000b024);
-	else if (adie == SECONDARY_ADIE)
+	else
 		CONSYS_REG_WRITE(conn_rf_spi_base + SPI_TOP_ADDR, 0x0000b02C);
 	CONSYS_REG_WRITE(conn_rf_spi_base + SPI_TOP_WDAT, 0);
 
@@ -2181,7 +2245,7 @@ static UINT32 consys_adie_chipid_checking_flow(UINT32 adie)
 	if (wmt_plat_soc_co_clock_flag_get() == 0)
 		consys_hw_vcn28_ctrl(DISABLE);
 #if CONSYS_PMIC_CTRL_ENABLE
-	if (adie == SECONDARY_ADIE) {
+	if (adie == SECONDARY_ADIE || adie == TERTIARY_ADIE) {
 		if (!reg_VCN13)
 			consys_hw_vcn13_ctrl_mt6377(DISABLE);
 		else if (regulator_disable(reg_VCN13))
@@ -2212,6 +2276,8 @@ static INT32 consys_adie_chipid_detect(VOID)
 			chipid = PRIMARY_ADIE;
 		else if (consys_adie_chipid_checking_flow(SECONDARY_ADIE) == SECONDARY_ADIE)
 			chipid = SECONDARY_ADIE;
+		else if (consys_adie_chipid_checking_flow(TERTIARY_ADIE) == TERTIARY_ADIE)
+			chipid = TERTIARY_ADIE;
 	}
 	WMT_PLAT_PR_INFO("A-die chip id = %x\n", chipid);
 

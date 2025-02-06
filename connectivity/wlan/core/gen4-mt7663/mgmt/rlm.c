@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/mgmt/rlm.c#3
  */
@@ -759,6 +713,7 @@ void rlmGenerateCsaIE(struct ADAPTER *prAdapter, struct MSDU_INFO *prMsduInfo)
 			(uint8_t *)((unsigned long)prMsduInfo->prPacket +
 				    (unsigned long)prMsduInfo->u2FrameLength);
 
+		/* Fill CSA IE */
 		CSA_IE(pucBuffer)->ucId = ELEM_ID_CH_SW_ANNOUNCEMENT;
 		CSA_IE(pucBuffer)->ucLength = ELEM_MIN_LEN_CSA;
 		CSA_IE(pucBuffer)->ucChannelSwitchMode =
@@ -770,6 +725,30 @@ void rlmGenerateCsaIE(struct ADAPTER *prAdapter, struct MSDU_INFO *prMsduInfo)
 
 		prMsduInfo->u2FrameLength += IE_SIZE(pucBuffer);
 		pucBuffer += IE_SIZE(pucBuffer);
+
+#if CFG_SUPPORT_P2P_CSA
+		/* Fill Secondary channel offset IE */
+		SEC_OFFSET_IE(pucBuffer)->ucId = ELEM_ID_SCO;
+		SEC_OFFSET_IE(pucBuffer)->ucLength = 1;
+		SEC_OFFSET_IE(pucBuffer)->ucSecondaryOffset =
+			prAdapter->rWifiVar.ucSecondaryOffset;
+
+		prMsduInfo->u2FrameLength += IE_SIZE(pucBuffer);
+		pucBuffer += IE_SIZE(pucBuffer);
+
+		/* Fill Wide Bandwidth Channel Switch IE */
+
+		WIDE_BW_IE(pucBuffer)->ucId = ELEM_ID_WIDE_BAND_CHANNEL_SWITCH;
+		WIDE_BW_IE(pucBuffer)->ucLength = 3;
+		WIDE_BW_IE(pucBuffer)->ucNewChannelWidth =
+			prAdapter->rWifiVar.ucNewChannelWidth;
+		WIDE_BW_IE(pucBuffer)->ucChannelS1 =
+			prAdapter->rWifiVar.ucNewChannelS1;
+		WIDE_BW_IE(pucBuffer)->ucChannelS2 =
+			prAdapter->rWifiVar.ucNewChannelS2;
+
+		prMsduInfo->u2FrameLength += IE_SIZE(pucBuffer);
+#endif
 	}
 }
 
@@ -2160,9 +2139,9 @@ static uint8_t rlmRecIeInfoForClient(struct ADAPTER *prAdapter,
 #if CFG_SUPPORT_802_11AC
 	struct IE_VHT_OP *prVhtOp;
 	struct IE_VHT_CAP *prVhtCap;
-	struct IE_OP_MODE_NOTIFICATION
-		*prOPModeNotification; /* Operation Mode Notification */
+	struct IE_OP_MODE_NOTIFICATION *prOPNotif;
 	u_int8_t fgHasOPModeIE = FALSE;
+	uint8_t fgHasNewOPModeIE = FALSE;
 	uint8_t ucVhtOpModeChannelWidth = 0;
 	uint8_t ucVhtOpModeRxNss = 0;
 	uint8_t ucMaxBwAllowed;
@@ -2458,32 +2437,54 @@ static uint8_t rlmRecIeInfoForClient(struct ADAPTER *prAdapter,
 				    (sizeof(struct IE_OP_MODE_NOTIFICATION) -
 				     2))
 				break;
-			prOPModeNotification =
-				(struct IE_OP_MODE_NOTIFICATION *)pucIE;
+			prOPNotif = (struct IE_OP_MODE_NOTIFICATION *) pucIE;
 
-			if ((prOPModeNotification->ucOpMode &
-			     VHT_OP_MODE_RX_NSS_TYPE) !=
-			    VHT_OP_MODE_RX_NSS_TYPE) {
-				if (prStaRec->ucVhtOpMode !=
-				    prOPModeNotification->ucOpMode) {
-					prStaRec->ucVhtOpMode =
-						prOPModeNotification->ucOpMode;
-					fgHasOPModeIE = TRUE;
-					ucVhtOpModeChannelWidth =
-						((prOPModeNotification
-							  ->ucOpMode) &
-						 VHT_OP_MODE_CHANNEL_WIDTH);
-					ucVhtOpModeRxNss =
-						((prOPModeNotification
-							  ->ucOpMode) &
-						 VHT_OP_MODE_RX_NSS) >>
-						VHT_OP_MODE_RX_NSS_OFFSET;
-				} else
-					/* Let the further flow not to update
-					 * VhtOpMode
-					 */
-					ucInitVhtOpMode = prStaRec->ucVhtOpMode;
+			/* NOTE: An AP always sets this field to 0,
+			 * so break it if this bit is set.
+			 */
+			if ((prOPNotif->ucOpMode & VHT_OP_MODE_RX_NSS_TYPE)
+			    == VHT_OP_MODE_RX_NSS_TYPE) {
+				break;
 			}
+			fgHasOPModeIE = TRUE;
+
+			/* Same OP mode, no need to update.
+			 * Let the further flow not to update VhtOpMode.
+			 */
+			if (prStaRec->ucVhtOpMode == prOPNotif->ucOpMode) {
+				ucInitVhtOpMode = prStaRec->ucVhtOpMode;
+				break;
+			}
+			fgHasNewOPModeIE = TRUE;
+			prStaRec->ucVhtOpMode = prOPNotif->ucOpMode;
+			ucVhtOpModeChannelWidth =
+				(prOPNotif->ucOpMode &
+				 VHT_OP_MODE_CHANNEL_WIDTH);
+			ucVhtOpModeRxNss =
+				(prOPNotif->ucOpMode & VHT_OP_MODE_RX_NSS)
+				>> VHT_OP_MODE_RX_NSS_OFFSET;
+
+			if (ucVhtOpModeRxNss == VHT_OP_MODE_NSS_2) {
+				prStaRec->u2VhtRxMcsMap = BITS(0, 15) &
+					(~(VHT_CAP_INFO_MCS_1SS_MASK |
+					VHT_CAP_INFO_MCS_2SS_MASK));
+
+				prStaRec->u2VhtRxMcsMap |=
+					(prStaRec->u2VhtRxMcsMapAssoc &
+					(VHT_CAP_INFO_MCS_1SS_MASK |
+					VHT_CAP_INFO_MCS_2SS_MASK));
+			} else {
+				prStaRec->u2VhtRxMcsMap = BITS(0, 15) &
+					(~VHT_CAP_INFO_MCS_1SS_MASK);
+
+				prStaRec->u2VhtRxMcsMap |=
+					(prStaRec->u2VhtRxMcsMapAssoc &
+					VHT_CAP_INFO_MCS_1SS_MASK);
+			}
+			DBGLOG(RLM, INFO,
+			       "NSS=%x RxMcsMap:0x%x, McsMapAssoc:0x%x\n",
+			       ucVhtOpModeRxNss, prStaRec->u2VhtRxMcsMap,
+			       prStaRec->u2VhtRxMcsMapAssoc);
 
 			break;
 #if CFG_SUPPORT_DFS
@@ -2564,7 +2565,12 @@ static uint8_t rlmRecIeInfoForClient(struct ADAPTER *prAdapter,
 
 			DBGLOG(RLM, INFO, "[Ch] Count=%d\n",
 			       prChannelSwitchAnnounceIE->ucChannelSwitchCount);
-
+#if CFG_SUPPORT_P2P_CSA
+			if (IS_BSS_P2P(prBssInfo)) {
+				fgHasChannelSwitchIE = TRUE;
+				break;
+			}
+#endif
 			if (prChannelSwitchAnnounceIE
 					->ucChannelSwitchMode == 1
 					|| prChannelSwitchAnnounceIE
@@ -2688,7 +2694,7 @@ static uint8_t rlmRecIeInfoForClient(struct ADAPTER *prAdapter,
 	 *  The channel bandwidth of OP Mode IE  is  3, represent as
 	 * 160/80+80MHz.
 	 */
-	if (fgHasOPModeIE == TRUE) {
+	if (fgHasNewOPModeIE == TRUE) {
 		if (prStaRec->ucStaState == STA_STATE_3) {
 			/* 1. Modify channel width parameters */
 			rlmRecOpModeBwForClient(ucVhtOpModeChannelWidth,
@@ -2723,6 +2729,13 @@ static uint8_t rlmRecIeInfoForClient(struct ADAPTER *prAdapter,
 			}
 		}
 	} else { /* Set Default if the VHT OP mode field is not present */
+		if (!fgHasOPModeIE) {
+			ucInitVhtOpMode |=
+				rlmGetOpModeBwByVhtAndHtOpInfo(prBssInfo);
+			ucInitVhtOpMode |= ((prBssInfo->ucNss - 1)
+					    << VHT_OP_MODE_RX_NSS_OFFSET) &
+					   VHT_OP_MODE_RX_NSS;
+		}
 		if ((prStaRec->ucVhtOpMode != ucInitVhtOpMode) &&
 		    (prStaRec->ucStaState == STA_STATE_3)) {
 			prStaRec->ucVhtOpMode = ucInitVhtOpMode;
@@ -2737,12 +2750,92 @@ static uint8_t rlmRecIeInfoForClient(struct ADAPTER *prAdapter,
 #endif
 
 #if CFG_SUPPORT_DFS
-	/* Check whether Channel Announcement IE, Secondary Offset IE &
-	 * Wide Bandwidth Channel Switch IE exist or not. If exist, the
-	 * priority is
-	 * the highest.
-	 */
+#if CFG_SUPPORT_P2P_CSA
+	if (IS_BSS_P2P(prBssInfo)) {
+		struct P2P_ROLE_FSM_INFO *prP2pRoleFsmInfo = NULL;
+		struct SWITCH_CH_AND_BAND_PARAMS *prCSAParams = NULL;
 
+		prP2pRoleFsmInfo = prAdapter->rWifiVar.aprP2pRoleFsmInfo
+			[prBssInfo->u4PrivateData];
+		prCSAParams = &prP2pRoleFsmInfo->rCSAParams;
+
+		if (fgHasChannelSwitchIE) {
+			uint8_t ucNewChl = prChannelSwitchAnnounceIE
+				->ucNewChannelNum;
+			uint8_t ucCsaCnt = prChannelSwitchAnnounceIE
+				->ucChannelSwitchCount;
+			uint8_t ucChlSwMode = prChannelSwitchAnnounceIE
+				->ucChannelSwitchMode;
+
+			DBGLOG(RLM, INFO, "P2P [CSA] Chl = %u, Count = %u\n",
+				   ucNewChl, ucCsaCnt);
+
+			/* Need to stop data transmission immediately */
+			if (ucChlSwMode == 1 || ucCsaCnt <= 3) {
+				if (prStaRec->fgIsTxAllowed) {
+					qmSetStaRecTxAllowed(prAdapter,
+						prStaRec,
+						FALSE);
+					DBGLOG(RLM, INFO,
+						"P2P [CSA] TxAllowed = FALSE\n");
+				}
+			}
+
+			if (SHOULD_CH_SWITCH(ucCsaCnt, prCSAParams) &&
+				(ucNewChl > 0)) {
+				prCSAParams->ucCsaCount = ucCsaCnt;
+				prCSAParams->ucCsaNewCh = ucNewChl;
+				prCSAParams->eCsaBand = (ucNewChl <= 14) ?
+					BAND_2G4 : BAND_5G;
+
+				if (fgHasSCOIE)
+					prCSAParams->eSco = eChannelAnnounceSco;
+				else
+					prCSAParams->eSco = CHNL_EXT_SCN;
+
+				if (fgHasWideBandIE) {
+					prCSAParams->ucVhtBw =
+						ucChannelAnnounceVhtBw;
+					prCSAParams->ucVhtS1 =
+						ucChannelAnnounceChannelS1;
+					prCSAParams->ucVhtS2 =
+						ucChannelAnnounceChannelS2;
+				} else {
+					prCSAParams->ucVhtBw = 0;
+					prCSAParams->ucVhtS1 = 0;
+					prCSAParams->ucVhtS2 = 0;
+				}
+
+				cnmTimerStopTimer(prAdapter,
+					&prP2pRoleFsmInfo->rCsaTimer);
+				cnmTimerStartTimer(prAdapter,
+					&prP2pRoleFsmInfo->rCsaTimer,
+					prBssInfo->u2BeaconInterval *
+					prCSAParams->ucCsaCount);
+
+				DBGLOG(RLM, INFO,
+					"P2P [CSA] BssIdx:%u Band:%u Chl:%u Cnt:%u Sco:%u VhtBw:%u VhtS1:%u VhtS2:%u Time:%ums\n",
+					prBssInfo->ucBssIndex,
+					prCSAParams->eCsaBand,
+					prCSAParams->ucCsaNewCh,
+					prCSAParams->ucCsaCount,
+					prCSAParams->eSco,
+					prCSAParams->ucVhtBw,
+					prCSAParams->ucVhtS1,
+					prCSAParams->ucVhtS2,
+					prBssInfo->u2BeaconInterval *
+					prCSAParams->ucCsaCount);
+			}
+		}
+
+		/* P2P CSA is done, and tx is stopped */
+		if (!P2P_CSA_GOING(prCSAParams) && !prStaRec->fgIsTxAllowed) {
+			qmSetStaRecTxAllowed(prAdapter, prStaRec, TRUE);
+			DBGLOG(RLM, INFO, "[CSA] TxAllowed = TRUE\n");
+		}
+	} else
+#endif
+	{
 	if (fgNeedSwitchChannel) {
 		struct BSS_DESC *prBssDesc = NULL;
 		struct PARAM_SSID rSsid;
@@ -2831,7 +2924,8 @@ static uint8_t rlmRecIeInfoForClient(struct ADAPTER *prAdapter,
 		DBGLOG(RLM, INFO, "Ch : DFS has Appeared\n");
 	}
 #endif
-#endif
+	}
+#endif /* CFG_SUPPORT_DFS */
 	rlmReviseMaxBw(prAdapter, prBssInfo->ucBssIndex, &prBssInfo->eBssSCO,
 		       (enum ENUM_CHANNEL_WIDTH *)&prBssInfo->ucVhtChannelWidth,
 		       &prBssInfo->ucVhtChannelFrequencyS1,
@@ -3691,6 +3785,36 @@ void rlmProcessVhtAction(struct ADAPTER *prAdapter, struct SW_RFB *prSwRfb)
 							prBssInfo);
 
 			/* 3. Update StaRec to FW */
+			/* As defined in spec, 11 means not support this MCS */
+			if (((prRxFrame->ucOperatingMode & VHT_OP_MODE_RX_NSS)
+				>> VHT_OP_MODE_RX_NSS_OFFSET) ==
+				VHT_OP_MODE_NSS_2) {
+				prStaRec->u2VhtRxMcsMap = BITS(0, 15) &
+					(~(VHT_CAP_INFO_MCS_1SS_MASK |
+					VHT_CAP_INFO_MCS_2SS_MASK));
+
+				prStaRec->u2VhtRxMcsMap |=
+					(prStaRec->u2VhtRxMcsMapAssoc &
+					(VHT_CAP_INFO_MCS_1SS_MASK |
+					VHT_CAP_INFO_MCS_2SS_MASK));
+				DBGLOG(RLM, INFO,
+				       "NSS=2 RxMcsMap:0x%x, McsMapAssoc:0x%x\n",
+				       prStaRec->u2VhtRxMcsMap,
+				       prStaRec->u2VhtRxMcsMapAssoc);
+
+			} else {
+				/* NSS = 1 or others */
+				prStaRec->u2VhtRxMcsMap = BITS(0, 15) &
+					(~VHT_CAP_INFO_MCS_1SS_MASK);
+
+				prStaRec->u2VhtRxMcsMap |=
+					(prStaRec->u2VhtRxMcsMapAssoc &
+					VHT_CAP_INFO_MCS_1SS_MASK);
+				DBGLOG(RLM, INFO,
+				       "NSS=1 RxMcsMap:0x%x, McsMapAssoc:0x%x\n",
+				       prStaRec->u2VhtRxMcsMap,
+				       prStaRec->u2VhtRxMcsMapAssoc);
+			}
 			cnmStaSendUpdateCmd(prAdapter, prStaRec, NULL, FALSE);
 
 			/* 4. Update BW parameters in BssInfo for STA mode only
@@ -4020,6 +4144,9 @@ void rlmProcessAssocReq(struct ADAPTER *prAdapter, struct SW_RFB *prSwRfb,
 
 			prStaRec->u2VhtRxMcsMap =
 				prVhtCap->rVhtSupportedMcsSet.u2RxMcsMap;
+
+			prStaRec->u2VhtRxMcsMapAssoc =
+				prStaRec->u2VhtRxMcsMap;
 
 			prStaRec->u2VhtRxHighestSupportedDataRate =
 				prVhtCap->rVhtSupportedMcsSet
@@ -4676,6 +4803,12 @@ void rlmProcessSpecMgtAction(struct ADAPTER *prAdapter, struct SW_RFB *prSwRfb)
 				       "[Mgt Action] ELEM_ID_WIDE_BAND_CHANNEL_SWITCH, 11AC\n");
 				prWideBandChannelIE =
 					(struct IE_WIDE_BAND_CHANNEL *)pucIE;
+#if (CFG_SUPPORT_P2P_CSA == 1)
+				if (IS_BSS_P2P(prBssInfo)) {
+					fgHasWideBandIE = TRUE;
+					break;
+				}
+#else
 				prBssInfo->ucVhtChannelWidth =
 					prWideBandChannelIE->ucNewChannelWidth;
 				prBssInfo->ucVhtChannelFrequencyS1 =
@@ -4702,6 +4835,7 @@ void rlmProcessSpecMgtAction(struct ADAPTER *prAdapter, struct SW_RFB *prSwRfb)
 				}
 
 				fgHasWideBandIE = TRUE;
+#endif
 				break;
 
 			case ELEM_ID_CH_SW_ANNOUNCEMENT:
@@ -4715,6 +4849,12 @@ void rlmProcessSpecMgtAction(struct ADAPTER *prAdapter, struct SW_RFB *prSwRfb)
 				prChannelSwitchAnnounceIE =
 					(struct IE_CHANNEL_SWITCH *)pucIE;
 
+#if (CFG_SUPPORT_P2P_CSA == 1)
+				if (IS_BSS_P2P(prBssInfo)) {
+					fgHasChannelSwitchIE = TRUE;
+					break;
+				}
+#endif
 				if (prChannelSwitchAnnounceIE
 					    ->ucChannelSwitchMode == 1) {
 					/* Need to stop data
@@ -4781,6 +4921,12 @@ void rlmProcessSpecMgtAction(struct ADAPTER *prAdapter, struct SW_RFB *prSwRfb)
 				       "[Mgt Action] SCO [%d]->[%d]\n",
 				       prBssInfo->eBssSCO,
 				       prSecondaryOffsetIE->ucSecondaryOffset);
+#if (CFG_SUPPORT_P2P_CSA == 1)
+				if (IS_BSS_P2P(prBssInfo)) {
+					fgHasSCOIE = TRUE;
+					break;
+				}
+#endif
 				prBssInfo->eBssSCO =
 					prSecondaryOffsetIE->ucSecondaryOffset;
 				fgHasSCOIE = TRUE;
@@ -4789,6 +4935,92 @@ void rlmProcessSpecMgtAction(struct ADAPTER *prAdapter, struct SW_RFB *prSwRfb)
 				break;
 			} /*end of switch IE_ID */
 		}	 /*end of IE_FOR_EACH */
+#if CFG_SUPPORT_P2P_CSA
+		if (IS_BSS_P2P(prBssInfo)) {
+			struct P2P_ROLE_FSM_INFO *prP2pRoleFsmInfo = NULL;
+			struct SWITCH_CH_AND_BAND_PARAMS *prCSAParams = NULL;
+
+			prP2pRoleFsmInfo = prAdapter->rWifiVar.aprP2pRoleFsmInfo
+				[prBssInfo->u4PrivateData];
+			prCSAParams = &prP2pRoleFsmInfo->rCSAParams;
+
+			if (fgHasChannelSwitchIE) {
+				uint8_t ucNewChl = prChannelSwitchAnnounceIE
+					->ucNewChannelNum;
+				uint8_t ucCsaCnt = prChannelSwitchAnnounceIE
+					->ucChannelSwitchCount;
+				uint8_t ucChlSwMode = prChannelSwitchAnnounceIE
+					->ucChannelSwitchMode;
+
+				DBGLOG(RLM, INFO,
+					"P2P [CSA] Chl = %u, Count = %u\n",
+					ucNewChl, ucCsaCnt);
+
+				/* Need to stop data transmission immediately */
+				if (ucChlSwMode == 1 || ucCsaCnt <= 3) {
+					if (prStaRec->fgIsTxAllowed) {
+						qmSetStaRecTxAllowed(prAdapter,
+							prStaRec,
+							FALSE);
+						DBGLOG(RLM, INFO,
+							"P2P [CSA] TxAllowed = FALSE\n");
+					}
+				}
+
+				if (SHOULD_CH_SWITCH(ucCsaCnt, prCSAParams)) {
+					prCSAParams->ucCsaCount = ucCsaCnt;
+					prCSAParams->ucCsaNewCh = ucNewChl;
+					prCSAParams->eCsaBand =
+					  (ucNewChl <= 14) ? BAND_2G4 : BAND_5G;
+
+					if (fgHasSCOIE)
+						prCSAParams->eSco =
+						prSecondaryOffsetIE
+						->ucSecondaryOffset;
+					else
+						prCSAParams->eSco =
+						    CHNL_EXT_SCN;
+
+					if (fgHasWideBandIE) {
+						prCSAParams->ucVhtBw =
+							prWideBandChannelIE
+							->ucNewChannelWidth;
+						prCSAParams->ucVhtS1 =
+							prWideBandChannelIE
+							->ucChannelS1;
+						prCSAParams->ucVhtS2 =
+							prWideBandChannelIE
+							->ucChannelS2;
+					} else {
+						prCSAParams->ucVhtBw = 0;
+						prCSAParams->ucVhtS1 = 0;
+						prCSAParams->ucVhtS2 = 0;
+					}
+
+					cnmTimerStopTimer(prAdapter,
+						&prP2pRoleFsmInfo->rCsaTimer);
+					cnmTimerStartTimer(prAdapter,
+						&prP2pRoleFsmInfo->rCsaTimer,
+						prBssInfo->u2BeaconInterval *
+						prCSAParams->ucCsaCount);
+
+					DBGLOG(RLM, INFO,
+						"P2P [CSA] BssIdx:%u Band:%u Chl:%u Cnt:%u Sco:%u VhtBw:%u VhtS1:%u VhtS2:%u Time:%ums\n",
+						prBssInfo->ucBssIndex,
+						prCSAParams->eCsaBand,
+						prCSAParams->ucCsaNewCh,
+						prCSAParams->ucCsaCount,
+						prCSAParams->eSco,
+						prCSAParams->ucVhtBw,
+						prCSAParams->ucVhtS1,
+						prCSAParams->ucVhtS2,
+						prBssInfo->u2BeaconInterval *
+						prCSAParams->ucCsaCount);
+				}
+			}
+		} else
+#endif
+		{
 		if (fgHasChannelSwitchIE != FALSE) {
 			if (fgHasWideBandIE == FALSE) {
 				prBssInfo->ucVhtChannelWidth = 0;
@@ -4799,19 +5031,63 @@ void rlmProcessSpecMgtAction(struct ADAPTER *prAdapter, struct SW_RFB *prSwRfb)
 			if (fgHasSCOIE == FALSE)
 				prBssInfo->eBssSCO = CHNL_EXT_SCN;
 			if (fgNeedSwitchChannel)
-				kalIndicateChannelSwitch(
-					prAdapter->prGlueInfo,
+				kalIndicateChannelSwitch(prAdapter->prGlueInfo,
 					prBssInfo->eBssSCO,
 					prBssInfo->ucPrimaryChannel);
 		}
 		nicUpdateBss(prAdapter, prBssInfo->ucBssIndex);
+		}
 		break;
 	default:
 		break;
 	}
 }
 
-#endif
+#if CFG_SUPPORT_P2P_CSA
+void rlmResetCsaParams(struct ADAPTER *prAdapter,
+			   uint8_t ucRoleIdx)
+{
+	struct SWITCH_CH_AND_BAND_PARAMS *prCSAParams;
+
+	prCSAParams = &prAdapter->rWifiVar.aprP2pRoleFsmInfo
+				[ucRoleIdx]->rCSAParams;
+	kalMemZero(prCSAParams, sizeof(struct SWITCH_CH_AND_BAND_PARAMS));
+	prCSAParams->ucCsaCount = MAX_CSA_COUNT;
+}
+
+void rlmCsaTimeout(struct ADAPTER *prAdapter,
+			   uintptr_t ulParamPtr)
+{
+	uint8_t ucRoleIdx = (uint8_t) ulParamPtr;
+	struct P2P_ROLE_FSM_INFO *prP2pRoleFsmInfo;
+	struct SWITCH_CH_AND_BAND_PARAMS *prCSAParams;
+	struct P2P_CHNL_REQ_INFO *prChnlReqInfo;
+
+	DBGLOG(RLM, INFO, "CSA timeout\n");
+
+	prP2pRoleFsmInfo = prAdapter->rWifiVar.aprP2pRoleFsmInfo
+		[ucRoleIdx];
+	prCSAParams = &prP2pRoleFsmInfo->rCSAParams;
+
+	/* Fill channel request parameters */
+	prChnlReqInfo = &prP2pRoleFsmInfo->rChnlReqInfo;
+	prChnlReqInfo->ucReqChnlNum = prCSAParams->ucCsaNewCh;
+	prChnlReqInfo->eBand = prCSAParams->eCsaBand;
+	prChnlReqInfo->eChnlSco = prCSAParams->eSco;
+	prChnlReqInfo->eChannelWidth = prCSAParams->ucVhtBw;
+	prChnlReqInfo->ucCenterFreqS1 = prCSAParams->ucVhtS1;
+	prChnlReqInfo->ucCenterFreqS2 = prCSAParams->ucVhtS2;
+
+	if (prChnlReqInfo->ucReqChnlNum > 0) {
+		p2pRoleFsmStateTransition(prAdapter,
+			prP2pRoleFsmInfo,
+			P2P_ROLE_STATE_SWITCH_CHANNEL);
+	} else {
+		DBGLOG(RLM, WARN, "invalid ChnlNum, do not switch");
+	}
+}
+#endif /* CFG_SUPPORT_P2P_CSA */
+#endif /* CFG_SUPPORT_DFS */
 
 /*----------------------------------------------------------------------------*/
 /*!
@@ -6403,7 +6679,8 @@ schedule_next:
 			if (u2RandomTime > 0) {
 				cnmTimerStopTimer(prAdapter, &rBeaconReqTimer);
 				cnmTimerInitTimer(prAdapter, &rBeaconReqTimer,
-						  rlmDoBeaconMeasurement, 0);
+						  rlmDoBeaconMeasurement, 0,
+						  TIMER_WAKELOCK_AUTO);
 				cnmTimerStartTimer(prAdapter, &rBeaconReqTimer,
 						   u2RandomTime);
 			} else
@@ -6477,7 +6754,8 @@ schedule_next:
 		u2RandomTime = TU_TO_MSEC(u2RandomTime);
 		cnmTimerStopTimer(prAdapter, &rTSMReqTimer);
 		cnmTimerInitTimer(prAdapter, &rTSMReqTimer,
-			wmmStartTsmMeasurement, (unsigned long)prTsmReq);
+			wmmStartTsmMeasurement, (unsigned long)prTsmReq,
+			TIMER_WAKELOCK_AUTO);
 		cnmTimerStartTimer(prAdapter, &rTSMReqTimer, u2RandomTime);
 		break;
 	}
@@ -6566,37 +6844,41 @@ u_int8_t rlmFillScanMsg(struct ADAPTER *prAdapter,
 			uint16_t u2IELength = 0;
 			uint16_t u2Offset = 0;
 
-			pucIE = prBssDesc->aucIEBuf;
+			pucIE = prBssDesc->pucIeBuf;
 			u2IELength = prBssDesc->u2IELength;
-			IE_FOR_EACH(pucIE, u2IELength, u2Offset)
-			{
-			if (IE_ID(pucIE) != ELEM_ID_AP_CHANNEL_REPORT)
-				continue;
-			pucChnl = ((struct IE_AP_CHNL_REPORT *)pucIE)
-				->aucChnlList;
-			ucChnlNum = pucIE[1] - 1;
-			DBGLOG(RLM, INFO,
-				"BCN REQ: Channel number in latest AP channel report %d\n",
-				ucChnlNum);
-			while (ucIndex < ucChnlNum &&
-				prMsg->ucChannelListNum <
-				MAXIMUM_OPERATION_CHANNEL_LIST) {
-				if (pucChnl[ucIndex] <= 14)
-					prChnlInfo
-						[prMsg->ucChannelListNum]
-							.eBand =
-						BAND_2G4;
-				else
-					prChnlInfo
-						[prMsg->ucChannelListNum]
-							.eBand =
-						BAND_5G;
-				prChnlInfo[prMsg->ucChannelListNum]
-					.ucChannelNum =
-					pucChnl[ucIndex];
-				prMsg->ucChannelListNum++;
-				ucIndex++;
-			}
+			if (pucIE != NULL) {
+				IE_FOR_EACH(pucIE, u2IELength, u2Offset)
+				{
+				if (IE_ID(pucIE) != ELEM_ID_AP_CHANNEL_REPORT)
+					continue;
+				pucChnl = ((struct IE_AP_CHNL_REPORT *)pucIE)
+					->aucChnlList;
+				ucChnlNum = pucIE[1] - 1;
+				DBGLOG(RLM, INFO,
+					"BCN REQ: Channel number in latest AP channel report %d\n",
+					ucChnlNum);
+				while (ucIndex < ucChnlNum &&
+					prMsg->ucChannelListNum <
+					MAXIMUM_OPERATION_CHANNEL_LIST) {
+					if (pucChnl[ucIndex] <= 14)
+						prChnlInfo
+						[prMsg->
+						ucChannelListNum]
+								.eBand =
+							BAND_2G4;
+					else
+						prChnlInfo
+						[prMsg->
+						ucChannelListNum]
+								.eBand =
+							BAND_5G;
+					prChnlInfo[prMsg->ucChannelListNum]
+						.ucChannelNum =
+						pucChnl[ucIndex];
+					prMsg->ucChannelListNum++;
+					ucIndex++;
+				}
+				}
 			}
 		}
 	} else {
@@ -6715,7 +6997,7 @@ void rlmDoBeaconMeasurement(struct ADAPTER *prAdapter, unsigned long ulParam)
 				   &prBssDesc->u8TimeStamp, 8);
 			*pu2BcnInterval = prBssDesc->u2BeaconInterval;
 			*pu2CapInfo = prBssDesc->u2CapInfo;
-			rlmCollectBeaconReport(prAdapter, prBssDesc->aucIEBuf,
+			rlmCollectBeaconReport(prAdapter, prBssDesc->pucIeBuf,
 					       prBssDesc->u2IELength,
 					       prBssDesc->aucBSSID,
 					       &rRepParams);
@@ -7440,8 +7722,6 @@ void rlmProcessBeaconAndProbeResp(struct ADAPTER *prAdapter,
 			   OFFSET_OF(struct WLAN_BEACON_FRAME, aucInfoElem);
 
 	kalMemZero(&rRepParams, sizeof(rRepParams));
-	if (u2IELen > CFG_IE_BUFFER_SIZE)
-		u2IELen = CFG_IE_BUFFER_SIZE;
 
 	/* if this is a one antenna only device, the antenna id is always 1.
 	 ** 7.3.2.40

@@ -681,7 +681,7 @@ struct GLUE_INFO {
 	unsigned long ulFlag;		/* GLUE_FLAG_XXX */
 	uint32_t u4PendFlag;
 	/* UINT_32 u4TimeoutFlag; */
-	uint32_t u4OidCompleteFlag;
+	u_int8_t fgOidWaiting; /* TRUE: waiter enters ioctl, FALSE: completed */
 	uint32_t u4ReadyFlag;	/* check if card is ready */
 
 	uint32_t u4OsMgmtFrameFilter;
@@ -725,21 +725,17 @@ struct GLUE_INFO {
 
 #if WLAN_INCLUDE_PROC
 	struct proc_dir_entry *pProcRoot;
-#endif				/* WLAN_INCLUDE_PROC */
+#endif
 
 	/* Device power state D0~D3 */
 	enum PARAM_DEVICE_POWER_STATE ePowerState;
 
 	struct completion rScanComp;	/* indicate scan complete */
-	struct completion
-		rHaltComp;	/* indicate main thread halt complete */
-	struct completion
-		rPendComp;	/* indicate main thread halt complete */
+	struct completion rHaltComp;	/* indicate main thread halt complete */
+	struct completion rPendComp;	/* Pending completion for OID */
 #if CFG_SUPPORT_MULTITHREAD
-	struct completion
-		rHifHaltComp;	/* indicate hif_thread halt complete */
-	struct completion
-		rRxHaltComp;	/* indicate hif_thread halt complete */
+	struct completion rHifHaltComp;	/* indicate hif_thread halt complete */
+	struct completion rRxHaltComp;	/* indicate rx_thread halt complete */
 
 	uint32_t u4TxThreadPid;
 	uint32_t u4RxThreadPid;
@@ -747,8 +743,8 @@ struct GLUE_INFO {
 #endif
 
 #if CFG_SUPPORT_NCHO
-	struct completion
-		rAisChGrntComp;	/* indicate Ais channel grant complete */
+	/* indicate Ais channel grant complete */
+	struct completion rAisChGrntComp;
 #endif
 
 	uint32_t rPendStatus;
@@ -775,6 +771,11 @@ struct GLUE_INFO {
 	struct task_struct *rx_thread;
 
 #endif
+#if CFG_SUPPORT_RX_NAPI_THREADED
+		uint32_t u4RxNapiThreadPid;
+		struct task_struct *napi_thread;
+#endif /* CFG_SUPPORT_RX_NAPI_THREADED */
+
 	/* cpu statistics */
 	atomic_t aCpuStatCnt[CPU_STATISTICS_MAX][CPU_CNT_MAX];
 #if CFG_SUPPORT_TX_WORK

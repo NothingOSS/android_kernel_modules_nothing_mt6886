@@ -27,6 +27,7 @@
 #else
 #include <uapi/linux/sched/types.h>
 #endif
+#include <asm/barrier.h>
 
 #include "btmtk_sdio.h"
 
@@ -544,6 +545,7 @@ static int btmtk_sdio_read_register(struct btmtk_dev *bdev, u32 reg, u32 *val)
 
 	memcpy(val, bdev->io_buf + MCU_ADDRESS_OFFSET_EVT - HCI_TYPE_SIZE, sizeof(u32));
 	*val = le32_to_cpu(*val);
+	smp_wmb();
 
 	BTMTK_INFO("%s: reg=%x, value=0x%08x", __func__, reg, *val);
 
@@ -1016,6 +1018,7 @@ int btmtk_sdio_send_cmd(struct btmtk_dev *bdev, struct sk_buff *skb,
 				notify_alt_evt[6] = (crValue & 0x000000FF);
 				memcpy(evt_skb->data, &notify_alt_evt[1], NOTIFY_ALT_EVT_LEN - 1);
 				evt_skb->len = NOTIFY_ALT_EVT_LEN - 1;
+				smp_wmb();
 				hci_recv_frame(bdev->hdev, evt_skb);
 				kfree_skb(skb);
 				skb = NULL;
@@ -1046,6 +1049,7 @@ int btmtk_sdio_send_cmd(struct btmtk_dev *bdev, struct sk_buff *skb,
 				notify_alt_evt[6] = (crValue & 0x000000FF);
 				memcpy(evt_skb->data, &notify_alt_evt[1], NOTIFY_ALT_EVT_LEN - 1);
 				evt_skb->len = NOTIFY_ALT_EVT_LEN - 1;
+				smp_wmb();
 				hci_recv_frame(bdev->hdev, evt_skb);
 				kfree_skb(skb);
 				skb = NULL;
@@ -1166,6 +1170,7 @@ static int btmtk_cif_recv_evt(struct btmtk_dev *bdev)
 		memset(cif_dev->transfer_buf, 0, URB_MAX_BUFFER_SIZE);
 		hci_pkt_len += 5;
 		memcpy(cif_dev->transfer_buf + MTK_SDIO_PACKET_HEADER_SIZE, bdev->io_buf, hci_pkt_len);
+		smp_wmb();
 		BTMTK_DBG_RAW(cif_dev->transfer_buf, hci_pkt_len, "%s: raw data is :", __func__);
 	}
 #if 0
@@ -1199,6 +1204,7 @@ static int btmtk_cif_recv_evt(struct btmtk_dev *bdev)
 		memset(cif_dev->transfer_buf, 0, URB_MAX_BUFFER_SIZE);
 		hci_pkt_len += 5;
 		memcpy(cif_dev->transfer_buf + MTK_SDIO_PACKET_HEADER_SIZE, bdev->io_buf, hci_pkt_len);
+		smp_wmb();
 		BTMTK_DBG_RAW(cif_dev->transfer_buf, hci_pkt_len, "%s: raw data is :", __func__);
 		break;
 	}
@@ -1271,6 +1277,7 @@ int btmtk_sdio_event_filter(struct btmtk_dev *bdev, struct sk_buff *skb)
 			/* Such as chip_id, fw_version, etc. */
 			bdev->io_buf[0] = bt_cb(skb)->pkt_type;
 			memcpy(&bdev->io_buf[1], skb->data, skb->len);
+			smp_wmb();
 			event_compare_status = BTMTK_EVENT_COMPARE_STATE_COMPARE_SUCCESS;
 			BTMTK_DBG("%s, compare success", __func__);
 		} else {
@@ -1332,6 +1339,7 @@ int btmtk_sdio_send_and_recv(struct btmtk_dev *bdev,
 	do {
 		/* check if event_compare_success */
 		if (event_compare_status == BTMTK_EVENT_COMPARE_STATE_COMPARE_SUCCESS) {
+			smp_rmb();
 			ret = 0;
 			break;
 		}

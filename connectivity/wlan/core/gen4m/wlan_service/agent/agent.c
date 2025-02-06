@@ -5199,7 +5199,7 @@ static s_int32 hqa_listmode_tx_seg(
 				sizeof(struct list_mode_event));
 
 		if (ret != SERV_STATUS_SUCCESS) {
-			SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_ERROR,
+			SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_TRACE,
 				("%s pRsp alloc=%d\n", __func__, ret));
 			break;
 		}
@@ -5211,7 +5211,7 @@ static s_int32 hqa_listmode_tx_seg(
 				ParserSegHeader.u4SegParaNum));
 
 		if (ret != SERV_STATUS_SUCCESS) {
-			SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_ERROR,
+			SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_TRACE,
 				("%s pSendSegHeader alloc=%d\n",
 				__func__, ret));
 			break;
@@ -5243,7 +5243,7 @@ static s_int32 hqa_listmode_tx_seg(
 			if (pSendSegHeader->u4SegParaNum >
 				LIST_MODE_FW_SEG_PARA_NUM_MAX) {
 				SERV_LOG(SERV_DBG_CAT_TEST,
-					SERV_DBG_LVL_ERROR,
+					SERV_DBG_LVL_TRACE,
 					("%s: allocate eeprom memory fail\n",
 					__func__));
 
@@ -5262,12 +5262,12 @@ static s_int32 hqa_listmode_tx_seg(
 				&data,
 				(u_char *)&pSendSegHeader->au4Buffer[i]);
 			}
-
+#if 0
 			/* debug log */
 			if (remain_seg_num == 0) {
 				for (i = 0; i < seg_para_num; i += 19) {
 				SERV_LOG(SERV_DBG_CAT_TEST,
-				SERV_DBG_LVL_TRACE,
+				SERV_DBG_LVL_ERROR,
 				("seg %d:%d %d %d %d %d %d %d %d %d %d\n",
 				i,
 				pSendSegHeader->au4Buffer[i],
@@ -5282,7 +5282,7 @@ static s_int32 hqa_listmode_tx_seg(
 				pSendSegHeader->au4Buffer[i+9])
 				);
 				SERV_LOG(SERV_DBG_CAT_TEST,
-				SERV_DBG_LVL_TRACE,
+				SERV_DBG_LVL_ERROR,
 				("%d %d %d %d %d %d %d %d %d\n",
 				i+10,
 				pSendSegHeader->au4Buffer[i+10],
@@ -5297,7 +5297,7 @@ static s_int32 hqa_listmode_tx_seg(
 				);
 				}
 			}
-
+#endif
 			SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_TRACE,
 				("%s send_seg_num(%d), remain_seg_num(%d)\n",
 				__func__, ParserSegHeader.u4SegNum,
@@ -5311,7 +5311,7 @@ static s_int32 hqa_listmode_tx_seg(
 					pRsp);
 
 			if (ret != SERV_STATUS_SUCCESS) {
-				SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_ERROR,
+				SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_TRACE,
 					("%s mt_serv_listmode_cmd=%d\n",
 					__func__, ret));
 				break;
@@ -5346,7 +5346,9 @@ static s_int32 hqa_listmode_tx_cmd(
 	u_char *data = hqa_frame->data;
 	u_int32 ext_id = 0;
 	u_char *pbuf = NULL;
+	u_int32 rsp_len = 0;
 	struct list_mode_tx_seg_header *ptx_seg = NULL;
+	struct list_mode_event *pRsp = NULL;
 
 	SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_TRACE,
 		("%s\n", __func__));
@@ -5361,6 +5363,10 @@ static s_int32 hqa_listmode_tx_cmd(
 		ret = sys_ad_alloc_mem(&pbuf,
 				sizeof(struct list_mode_tx_seg_header));
 
+		/* alloc buffer to receive from FW */
+		ret = sys_ad_alloc_mem((u_char **)&pRsp,
+				sizeof(struct list_mode_event));
+
 		if (ret != SERV_STATUS_SUCCESS)
 			break;
 
@@ -5368,11 +5374,16 @@ static s_int32 hqa_listmode_tx_cmd(
 		ptx_seg->u4ExtId = ext_id;
 
 		ret = mt_serv_listmode_cmd(serv_test, pbuf,
-			sizeof(struct list_mode_tx_seg_header), 0, NULL);
+			sizeof(struct list_mode_tx_seg_header),
+			&rsp_len,
+			pRsp);
 	}	while (0);
 
 	if (pbuf != NULL)
 		sys_ad_free_mem(pbuf);
+
+	if (pRsp != NULL)
+		sys_ad_free_mem(pRsp);
 
 	/* Update hqa_frame with response: status (2 bytes) */
 	sys_ad_move_mem(hqa_frame->data + 2, (u_char *)&ext_id,
@@ -5440,7 +5451,7 @@ static s_int32 hqa_listmode_rx_seg(
 				sizeof(struct list_mode_event));
 
 		if (ret != SERV_STATUS_SUCCESS) {
-			SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_ERROR,
+			SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_TRACE,
 				("%s pRsp alloc=%d\n", __func__, ret));
 			break;
 		}
@@ -5453,7 +5464,7 @@ static s_int32 hqa_listmode_rx_seg(
 				ParserSegHeader.u4SegParaNum));
 
 		if (ret != SERV_STATUS_SUCCESS) {
-			SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_ERROR,
+			SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_TRACE,
 				("%s pSendSegHeader alloc=%d\n",
 				__func__, ret));
 			break;
@@ -5483,7 +5494,7 @@ static s_int32 hqa_listmode_rx_seg(
 			/* overflow check */
 			if (pSendSegHeader->u4SegParaNum >
 				LIST_MODE_FW_SEG_PARA_NUM_MAX) {
-				SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_ERROR,
+				SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_TRACE,
 					("%s: allocate eeprom memory fail\n",
 					__func__));
 
@@ -5538,7 +5549,7 @@ static s_int32 hqa_listmode_rx_seg(
 					pRsp);
 
 			if (ret != SERV_STATUS_SUCCESS) {
-				SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_ERROR,
+				SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_TRACE,
 					("%s mt_serv_listmode_cmd=%d\n",
 					__func__, ret));
 				break;
@@ -5573,7 +5584,9 @@ static s_int32 hqa_listmode_rx_cmd(
 	u_char *data = hqa_frame->data;
 	u_int32 ext_id = 0;
 	u_char *pbuf = NULL;
+	u_int32 rsp_len = 0;
 	struct list_mode_rx_seg_header *prx_seg = NULL;
+	struct list_mode_event *pRsp = NULL;
 
 	SERV_LOG(SERV_DBG_CAT_TEST, SERV_DBG_LVL_TRACE, ("%s\n", __func__));
 
@@ -5587,6 +5600,10 @@ static s_int32 hqa_listmode_rx_cmd(
 		ret = sys_ad_alloc_mem(&pbuf,
 				sizeof(struct list_mode_rx_seg_header));
 
+		/* alloc buffer to receive from FW */
+		ret = sys_ad_alloc_mem((u_char **)&pRsp,
+				sizeof(struct list_mode_event));
+
 		if (ret != SERV_STATUS_SUCCESS)
 			break;
 
@@ -5594,11 +5611,16 @@ static s_int32 hqa_listmode_rx_cmd(
 		prx_seg->u4ExtId = ext_id;
 
 		ret = mt_serv_listmode_cmd(serv_test, pbuf,
-			sizeof(struct list_mode_rx_seg_header), 0, NULL);
+			sizeof(struct list_mode_rx_seg_header),
+			&rsp_len,
+			pRsp);
 	} while (0);
 
 	if (pbuf != NULL)
 		sys_ad_free_mem(pbuf);
+
+	if (pRsp != NULL)
+		sys_ad_free_mem(pRsp);
 
 	/* Update hqa_frame with response: status (2 bytes) */
 	sys_ad_move_mem(hqa_frame->data + 2, (u_char *)&ext_id,
@@ -6005,7 +6027,7 @@ static struct priv_hqa_cmd_id_mapping priv_hqa_cmd_mapping[] = {
 	{4, 4, 4, 4, 4, 4, 4, 4, 4, 6} },
 	{"ListModeTxSeg", 0x1600,
 	{4, 4, 4, 4, 4, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4,
-		4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4} },
+		4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4} },
 	{"ListModeRxSeg", 0x1600,
 	{4, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
 		4, 4, 4, 4, 4, 4, 4, 4, 4, 4} },

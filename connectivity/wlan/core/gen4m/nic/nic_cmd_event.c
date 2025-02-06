@@ -918,8 +918,8 @@ void nicCmdEventQueryLinkQuality(struct ADAPTER *prAdapter,
 	prLinkSpeed = (struct PARAM_LINK_SPEED_EX *) (
 				   prCmdInfo->pvInformationBuffer);
 
-	DBGLOG(NIC, TRACE, "Glue=%p, Cmd=%p, pvInformationBuffer=%p",
-		prGlueInfo, prCmdInfo, prCmdInfo->pvInformationBuffer);
+	DBGLOG(NIC, TRACE, "Cmd=%p, pvInformationBuffer=%p",
+		prCmdInfo, prCmdInfo->pvInformationBuffer);
 
 	for (i = 0; i < BSSID_NUM; i++) {
 		struct LINK_SPEED_EX_ *prLq;
@@ -1076,8 +1076,8 @@ void nicCmdEventQueryLinkStats(struct ADAPTER *prAdapter,
 
 	prGlueInfo = prAdapter->prGlueInfo;
 
-	DBGLOG(NIC, TRACE, "Glue=%p, Pend=%p, Cmd=%p, oid=%u, Buf=%p, len=%u",
-			prGlueInfo, &prGlueInfo->rPendComp, prCmdInfo,
+	DBGLOG(NIC, TRACE, "Pend=%p, Cmd=%p, oid=%u, Buf=%p, len=%u",
+			&prGlueInfo->rPendComp, prCmdInfo,
 			prCmdInfo->fgIsOid, prCmdInfo->pvInformationBuffer,
 			len);
 
@@ -2199,7 +2199,7 @@ void nicCmdEventQueryLteSafeChn(struct ADAPTER *prAdapter,
 void nicEventRddPulseDump(struct ADAPTER *prAdapter,
 			  uint8_t *pucEventBuf)
 {
-	uint16_t u2Idx, u2PulseCnt;
+	uint16_t u2Idx, u2PulseCnt = 0;
 	struct EVENT_WIFI_RDD_TEST *prRddPulseEvent;
 
 	ASSERT(prAdapter);
@@ -2208,8 +2208,20 @@ void nicEventRddPulseDump(struct ADAPTER *prAdapter,
 	prRddPulseEvent = (struct EVENT_WIFI_RDD_TEST *) (
 				  pucEventBuf);
 
-	u2PulseCnt = (prRddPulseEvent->u4FuncLength -
-		      RDD_EVENT_HDR_SIZE) / RDD_ONEPLUSE_SIZE;
+	if (prRddPulseEvent->u4FuncLength >
+		(RX_GET_PACKET_MAX_SIZE(prAdapter)
+			- OFFSET_OF(struct WIFI_EVENT, aucBuffer))) {
+		DBGLOG(INIT, ERROR,
+			"u4FuncLength %u out of valid event length!\n",
+			prRddPulseEvent->u4FuncLength);
+		return;
+	}
+
+	/* underflow check */
+	if (prRddPulseEvent->u4FuncLength >= RDD_EVENT_HDR_SIZE) {
+		u2PulseCnt = (prRddPulseEvent->u4FuncLength -
+			RDD_EVENT_HDR_SIZE) / RDD_ONEPLUSE_SIZE;
+	}
 
 	DBGLOG(INIT, INFO, "[RDD]0x%08x %08d[RDD%d]\n",
 	       prRddPulseEvent->u4Prefix
@@ -3488,6 +3500,13 @@ void nicExtEventPhyIcsRawData(struct ADAPTER *prAdapter,
 				pucEventBuf;
 #endif
 
+	if (prPhyIcsEvent->u4DataLen > MAX_PHY_ICS_DUMP_DATA_CNT) {
+		DBGLOG(RFTEST, ERROR,
+			"u4DataLen %d out of valid event length!\n",
+			prPhyIcsEvent->u4DataLen);
+		return;
+	}
+
 	DBGLOG(RFTEST, INFO,
 	       "u4FuncIndex = %d, u4PktNum = [%d], u4PhyTimestamp = [0x%08x], u4DataLen = [%d]\n",
 	       prPhyIcsEvent->u4FuncIndex,
@@ -3509,7 +3528,7 @@ void nicExtEventPhyIcsRawData(struct ADAPTER *prAdapter,
 #endif
 
     /* endian swap */
-	for (Idxi = 0; Idxi < 256; Idxi++) {
+	for (Idxi = 0; Idxi < MAX_PHY_ICS_DUMP_DATA_CNT; Idxi++) {
 		prPhyIcsEvent->u4Data[Idxi] =
 			((prPhyIcsEvent->u4Data[Idxi] & 0x000000FF) << 24)
 			| ((prPhyIcsEvent->u4Data[Idxi] & 0x0000FF00) << 8)
@@ -3564,7 +3583,11 @@ void nicExtEventICapIQData(struct ADAPTER *prAdapter,
 
 	prIcapInfo = &prAdapter->rIcapInfo;
 	prIQArray = prIcapInfo->prIQArray;
-	ASSERT(prIQArray);
+
+	if (prIQArray == NULL) {
+		DBGLOG(RFTEST, ERROR, "prIQArray is NULL\n");
+		return;
+	}
 
 	/* If we receive the packet which is delivered from
 	 * last time data-capure, we need to drop it.
@@ -3580,6 +3603,20 @@ void nicExtEventICapIQData(struct ADAPTER *prAdapter,
 		DBGLOG(RFTEST, ERROR,
 		       "Packet out of order: Pkt num %d, EventCnt %d\n",
 		       prICapEvent->u4PktNum, prIcapInfo->u4ICapEventCnt);
+		return;
+	}
+
+	if (prICapEvent->u4WFCnt > MAX_ANTENNA_NUM
+		|| prICapEvent->u4WFCnt > MAX_IQ_ARRAY_WF_CNT) {
+		DBGLOG(RFTEST, WARN,
+		       "u4WFCnt is larger than Max Ant Num\n");
+		return;
+	}
+
+	if (prICapEvent->u4SmplCnt >
+		(ICAP_EVENT_DATA_SAMPLE / NUM_OF_CAP_TYPE)) {
+		DBGLOG(RFTEST, WARN,
+		       "u4SmplCnt is larger than buffer size\n");
 		return;
 	}
 

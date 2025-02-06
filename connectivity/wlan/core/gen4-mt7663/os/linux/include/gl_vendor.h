@@ -1,54 +1,8 @@
-/*******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- ******************************************************************************/
+/* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  * Log: gl_vendor.h
  *
@@ -90,12 +44,33 @@
 #define OUI_MTK 0x000CE7
 
 #define NL80211_VENDOR_SUBCMD_GET_APF_CAPABILITIES 14
+#define NL80211_VENDOR_SUBCMD_SET_PACKET_FILTER 15
+#define NL80211_VENDOR_SUBCMD_READ_PACKET_FILTER 16
 #define NL80211_VENDOR_SUBCMD_GET_PREFER_FREQ_LIST 103
 #define NL80211_VENDOR_SUBCMD_ACS 54
+#define NL80211_VENDOR_SUBCMD_GET_FEATURES 55
 #define QCA_NL80211_VENDOR_SUBCMD_SETBAND 105
 #define QCA_WLAN_VENDOR_ATTR_SETBAND_VALUE 12
 #define QCA_WLAN_VENDOR_ATTR_SETBAND_MASK 43
 #define QCA_WLAN_VENDOR_ATTR_MAX 44
+#define QCA_WLAN_VENDOR_ATTR_ROAMING_POLICY 5
+
+#if CFG_SUPPORT_MTK_SCAN_EVENT
+#define MTK_NL80211_SCAN_EVENT 153
+#endif
+#define WIFI_VENDOR_ATTR_FEATURE_FLAGS 7
+
+enum NL80211_VENDOR_FEATURES {
+	VENDOR_FEATURE_KEY_MGMT_OFFLOAD        = 0,
+	VENDOR_FEATURE_SUPPORT_HW_MODE_ANY     = 1,
+	VENDOR_FEATURE_OFFCHANNEL_SIMULTANEOUS = 2,
+	VENDOR_FEATURE_P2P_LISTEN_OFFLOAD      = 3,
+	VENDOR_FEATURE_OCE_STA                 = 4,
+	VENDOR_FEATURE_OCE_AP                  = 5,
+	VENDOR_FEATURE_OCE_STA_CFON            = 6,
+	NUM_VENDOR_FEATURES /* keep last */
+};
+
 
 enum ANDROID_VENDOR_SUB_COMMAND {
 	/* Don't use 0 as a valid subcommand */
@@ -179,8 +154,17 @@ enum WIFI_VENDOR_EVENT {
 	GSCAN_EVENT_HOTLIST_RESULTS_LOST,
 	WIFI_EVENT_RSSI_MONITOR,
 	WIFI_EVENT_MAGIC_PACKET_RECEIVED,
-	WIFI_EVENT_ACS
+	WIFI_EVENT_ACS,
+#if CFG_SUPPORT_MTK_SCAN_EVENT
+	WIFI_EVENT_SCAN_EVENT,
+#endif
 };
+
+#if CFG_SUPPORT_MTK_SCAN_EVENT
+enum WIFI_SCAN_EVENT_ATTRIBUTE {
+	WIFI_ATTRIBUTE_SCAN_STATUS = 1,
+};
+#endif
 
 enum WIFI_ATTRIBUTE {
 	WIFI_ATTRIBUTE_BAND = 1,
@@ -275,8 +259,13 @@ enum WIFI_MKEEP_ALIVE_ATTRIBUTE {
 	MKEEP_ALIVE_ATTRIBUTE_MAX
 };
 
+#if (CFG_SUPPORT_APF == 1)
+#define APF_VERSION		4
+#define APF_MAX_PROGRAM_LEN	2048
+#else
 #define APF_VERSION		0
 #define APF_MAX_PROGRAM_LEN	0
+#endif
 
 enum WIFI_APF_ATTRIBUTE {
 	APF_ATTRIBUTE_INVALID = 0,
@@ -310,17 +299,25 @@ enum WIFI_VENDOR_ATTR_PREFERRED_FREQ_LIST {
 
 enum WIFI_VENDOR_ATTR_ACS {
 	WIFI_VENDOR_ATTR_ACS_CHANNEL_INVALID = 0,
-	WIFI_VENDOR_ATTR_ACS_PRIMARY_CHANNEL,
-	WIFI_VENDOR_ATTR_ACS_SECONDARY_CHANNEL,
-	WIFI_VENDOR_ATTR_ACS_HW_MODE,
-	WIFI_VENDOR_ATTR_ACS_HT_ENABLED,
-	WIFI_VENDOR_ATTR_ACS_HT40_ENABLED,
-	WIFI_VENDOR_ATTR_ACS_VHT_ENABLED,
-	WIFI_VENDOR_ATTR_ACS_CHWIDTH,
-	WIFI_VENDOR_ATTR_ACS_CH_LIST,
-	WIFI_VENDOR_ATTR_ACS_VHT_SEG0_CENTER_CHANNEL,
-	WIFI_VENDOR_ATTR_ACS_VHT_SEG1_CENTER_CHANNEL,
-	WIFI_VENDOR_ATTR_ACS_FREQ_LIST,
+	WIFI_VENDOR_ATTR_ACS_PRIMARY_CHANNEL = 1,
+	WIFI_VENDOR_ATTR_ACS_SECONDARY_CHANNEL = 2,
+	WIFI_VENDOR_ATTR_ACS_HW_MODE = 3,
+	WIFI_VENDOR_ATTR_ACS_HT_ENABLED = 4,
+	WIFI_VENDOR_ATTR_ACS_HT40_ENABLED = 5,
+	WIFI_VENDOR_ATTR_ACS_VHT_ENABLED = 6,
+	WIFI_VENDOR_ATTR_ACS_CHWIDTH = 7,
+	WIFI_VENDOR_ATTR_ACS_CH_LIST = 8,
+	WIFI_VENDOR_ATTR_ACS_VHT_SEG0_CENTER_CHANNEL = 9,
+	WIFI_VENDOR_ATTR_ACS_VHT_SEG1_CENTER_CHANNEL = 10,
+	WIFI_VENDOR_ATTR_ACS_FREQ_LIST = 11,
+	WIFI_VENDOR_ATTR_ACS_PRIMARY_FREQUENCY = 12,
+	WIFI_VENDOR_ATTR_ACS_SECONDARY_FREQUENCY = 13,
+	WIFI_VENDOR_ATTR_ACS_VHT_SEG0_CENTER_FREQUENCY = 14,
+	WIFI_VENDOR_ATTR_ACS_VHT_SEG1_CENTER_FREQUENCY = 15,
+	WIFI_VENDOR_ATTR_ACS_ACS_EDMG_ENABLED = 16,
+	WIFI_VENDOR_ATTR_ACS_ACS_EDMG_CHANNEL = 17,
+
+	/* keep last */
 	WIFI_VENDOR_ATTR_ACS_AFTER_LAST,
 	WIFI_VENDOR_ATTR_ACS_MAX =
 		WIFI_VENDOR_ATTR_ACS_AFTER_LAST - 1
@@ -338,13 +335,6 @@ enum WIFI_VENDOR_ATTR_ACS {
  *                            P U B L I C   D A T A
  *******************************************************************************
  */
-#if CFG_SUPPORT_WAPI
-extern uint8_t
-keyStructBuf[1024];	/* add/remove key shared buffer */
-#else
-extern uint8_t
-keyStructBuf[100];	/* add/remove key shared buffer */
-#endif
 
 #if KERNEL_VERSION(5, 4, 0) <= LINUX_VERSION_CODE
 extern const struct nla_policy nla_parse_wifi_rssi_monitor[
@@ -648,9 +638,9 @@ struct PARAM_RSSI_MONITOR_EVENT {
 
 /* Packet Keep Alive */
 struct PARAM_PACKET_KEEPALIVE_T {
-	bool enable;	/* 1=Start, 0=Stop*/
+	u_int8_t fgEnable;	/* 1=Start, 0=Stop*/
 	uint8_t index;
-	int16_t u2IpPktLen;
+	uint16_t u2IpPktLen;
 	uint8_t pIpPkt[256];
 	uint8_t ucSrcMacAddr[PARAM_MAC_ADDR_LEN];
 	uint8_t ucDstMacAddr[PARAM_MAC_ADDR_LEN];
@@ -795,6 +785,23 @@ int mtk_cfg80211_vendor_get_preferred_freq_list(struct wiphy
 int mtk_cfg80211_vendor_acs(struct wiphy *wiphy,
 		struct wireless_dev *wdev, const void *data, int data_len);
 
+int mtk_cfg80211_vendor_get_features(struct wiphy *wiphy,
+		struct wireless_dev *wdev, const void *data, int data_len);
+
 int mtk_cfg80211_vendor_get_apf_capabilities(struct wiphy *wiphy,
 	struct wireless_dev *wdev, const void *data, int data_len);
+
+#if (CFG_SUPPORT_APF == 1)
+int mtk_cfg80211_vendor_set_packet_filter(
+	struct wiphy *wiphy,
+	struct wireless_dev *wdev, const void *data, int data_len);
+
+int mtk_cfg80211_vendor_read_packet_filter(
+	struct wiphy *wiphy,
+	struct wireless_dev *wdev, const void *data, int data_len);
+#endif /* CFG_SUPPORT_APF */
+#if CFG_SUPPORT_MTK_SCAN_EVENT
+int mtk_cfg80211_vendor_event_scan_status(struct ADAPTER *prAdapter,
+		uint32_t data);
+#endif
 #endif /* _GL_VENDOR_H */

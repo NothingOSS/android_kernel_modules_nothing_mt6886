@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  * Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/mgmt/rate.c#1
  */
@@ -95,23 +49,6 @@ const uint8_t aucDataRate[] = {
 	RATE_VHT_PHY,		/* RATE_VHT_PHY_INDEX */
 	RATE_HT_PHY,		/* RATE_HT_PHY_INDEX */
 	RATE_H2E_ONLY		/* RATE_H2E_ONLY_INDEX */
-};
-
-static const uint8_t aucDefaultAckCtsRateIndex[RATE_NUM_SW] = {
-	RATE_1M_SW_INDEX,	/* RATE_1M_SW_INDEX = 0 */
-	RATE_2M_SW_INDEX,	/* RATE_2M_SW_INDEX */
-	RATE_5_5M_SW_INDEX,	/* RATE_5_5M_SW_INDEX */
-	RATE_11M_SW_INDEX,	/* RATE_11M_SW_INDEX */
-	RATE_1M_SW_INDEX,	/* RATE_22M_SW_INDEX - Not supported */
-	RATE_1M_SW_INDEX,	/* RATE_33M_SW_INDEX - Not supported */
-	RATE_6M_SW_INDEX,	/* RATE_6M_SW_INDEX */
-	RATE_6M_SW_INDEX,	/* RATE_9M_SW_INDEX */
-	RATE_12M_SW_INDEX,	/* RATE_12M_SW_INDEX */
-	RATE_12M_SW_INDEX,	/* RATE_18M_SW_INDEX */
-	RATE_24M_SW_INDEX,	/* RATE_24M_SW_INDEX */
-	RATE_24M_SW_INDEX,	/* RATE_36M_SW_INDEX */
-	RATE_24M_SW_INDEX,	/* RATE_48M_SW_INDEX */
-	RATE_24M_SW_INDEX	/* RATE_54M_SW_INDEX */
 };
 
 const u_int8_t afgIsOFDMRate[RATE_NUM_SW] = {
@@ -187,12 +124,22 @@ rateGetRateSetFromIEs(IN struct IE_SUPPORTED_RATE *prIeSupportedRate,
 	uint16_t u2OperationalRateSet = 0;
 	uint16_t u2BSSBasicRateSet = 0;
 	u_int8_t fgIsUnknownBSSBasicRate = FALSE;
+	u_int8_t uctmpLength;
 	uint8_t ucRate;
 	uint32_t i, j;
 
-	ASSERT(pu2OperationalRateSet);
-	ASSERT(pu2BSSBasicRateSet);
-	ASSERT(pfgIsUnknownBSSBasicRate);
+	if (pu2OperationalRateSet == NULL) {
+		DBGLOG(SAA, ERROR, "pu2OperationalRateSetis null\n");
+		return;
+	}
+	if (pu2BSSBasicRateSet == NULL) {
+		DBGLOG(SAA, ERROR, "pu2BSSBasicRateSet null\n");
+		return;
+	}
+	if (pfgIsUnknownBSSBasicRate == NULL) {
+		DBGLOG(SAA, ERROR, "pfgIsUnknownBSSBasicRate null\n");
+		return;
+	}
 
 	if (prIeSupportedRate) {
 		/* NOTE(Kevin): Buffalo WHR-G54S's supported rate set
@@ -204,8 +151,10 @@ rateGetRateSetFromIEs(IN struct IE_SUPPORTED_RATE *prIeSupportedRate,
 		 *  <= ELEM_MAX_LEN_SUP_RATES);
 		 */
 		ASSERT(prIeSupportedRate->ucLength <= RATE_NUM_SW);
-
-		for (i = 0; i < prIeSupportedRate->ucLength; i++) {
+		uctmpLength = (prIeSupportedRate->ucLength
+			<= ELEM_MAX_LEN_SUP_RATES)
+			? prIeSupportedRate->ucLength : ELEM_MAX_LEN_SUP_RATES;
+		for (i = 0; i < uctmpLength; i++) {
 			ucRate =
 			    prIeSupportedRate->aucSupportedRates[i] & RATE_MASK;
 

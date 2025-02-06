@@ -187,7 +187,7 @@
 
 #define SCN_CTRL_DEFAULT_SCAN_CTRL		SCN_CTRL_IGNORE_AIS_FIX_CHANNEL
 
-#define SCN_SCAN_DONE_PRINT_BUFFER_LENGTH	400
+#define SCN_SCAN_DONE_PRINT_BUFFER_LENGTH	500
 /*******************************************************************************
  *                             D A T A   T Y P E S
  *******************************************************************************

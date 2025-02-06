@@ -367,6 +367,7 @@ static struct MSG_HNDL_ENTRY arMsgMapTable[] = {
 #endif /* ARP_MONITER_ENABLE */
 	{MID_MNY_P2P_LISTEN_OFFLOAD_START, p2pDevFsmListenOffloadStart},
 	{MID_MNY_P2P_LISTEN_OFFLOAD_STOP, p2pDevFsmListenOffloadStop},
+	{MID_RSN_MIC_FAIL, rsnMicErrorHandleMsg},
 };
 
 /*******************************************************************************

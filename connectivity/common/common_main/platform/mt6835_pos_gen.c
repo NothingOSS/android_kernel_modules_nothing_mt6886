@@ -71,6 +71,13 @@ void consys_set_if_pinmux_mt6835_gen(int enable)
 					CONSYS_GEN_GPIO_MODE18_OFFSET_ADDR, 0x10000000, 0x70000000);
 			}
 		#endif
+		/* set pinmux PUPD setting: CONN_TOP_DATA/CONN_BT_DATA as PU */
+		if (mtk_wcn_consys_get_adie_chipid() == TERTIARY_ADIE) {
+			CONSYS_REG_WRITE_MASK(vir_addr_consys_gen_iocfg_rt_base +
+				CONSYS_GEN_PU_SET_OFFSET_ADDR, 0x900, 0x900);
+			CONSYS_REG_WRITE_MASK(vir_addr_consys_gen_iocfg_rt_base +
+				CONSYS_GEN_PD_CLR_OFFSET_ADDR, 0x900, 0x900);
+		}
 	} else {
 		/* set pinmux for the interface between D-die and A-die (Aux0) */
 		CONSYS_REG_WRITE_MASK(vir_addr_consys_gen_gpio_base +
@@ -87,6 +94,14 @@ void consys_set_if_pinmux_mt6835_gen(int enable)
 					CONSYS_GEN_GPIO_MODE18_OFFSET_ADDR, 0x0, 0x70000000);
 			}
 		#endif
+
+		/*set pinmux PUPD setting: CONN_TOP_DATA/CONN_BT_DATA as PD */
+		if (mtk_wcn_consys_get_adie_chipid() == TERTIARY_ADIE) {
+			CONSYS_REG_WRITE_MASK(vir_addr_consys_gen_iocfg_rt_base +
+				CONSYS_GEN_PD_SET_OFFSET_ADDR, 0x900, 0x900);
+			CONSYS_REG_WRITE_MASK(vir_addr_consys_gen_iocfg_rt_base +
+				CONSYS_GEN_PU_CLR_OFFSET_ADDR, 0x900, 0x900);
+		}
 	}
 
 	if (vir_addr_consys_gen_gpio_base)
@@ -587,24 +602,33 @@ void consys_set_xo_osc_ctrl_mt6835_gen(void)
 
 void consys_identify_adie_mt6835_gen(void)
 {
+	int adie_chipid = mtk_wcn_consys_get_adie_chipid();
+
 	if (conn_reg.mcu_top_misc_on_base == 0) {
 		pr_notice("conn_reg.mcu_top_misc_on_base is not defined\n");
 		return;
 	}
 
-	/* write reserverd cr for identify adie is 6635 or 6631 */
-	if (mtk_wcn_consys_get_adie_chipid() == SECONDARY_ADIE) {
+	/* write reserverd cr for identify adie is 6635, 6631, or 6637 */
+	if (adie_chipid == SECONDARY_ADIE) {
 		CONSYS_CLR_BIT(conn_reg.mcu_top_misc_on_base +
 			CONSYS_GEN_CONN_ON_RSV_OFFSET_ADDR, (0x1U << 8));
-	} else {
+	} else if (adie_chipid == PRIMARY_ADIE) {
 		CONSYS_SET_BIT(conn_reg.mcu_top_misc_on_base +
 			CONSYS_GEN_CONN_CFG_ON_CONN_ON_RSV_OFFSET_ADDR, (0x1U << 8));
+	} else if (adie_chipid == TERTIARY_ADIE) {
+		CONSYS_SET_BIT(conn_reg.mcu_top_misc_on_base +
+			CONSYS_GEN_CONN_CFG_ON_CONN_ON_RSV_OFFSET_ADDR, (0x3U << 8));
 	}
 }
 
 void consys_wifi_ctrl_setting_mt6835_gen(void)
 {
 	void __iomem *vir_addr_consys_gen_gpio_base = NULL;
+	int adie_chipid = mtk_wcn_consys_get_adie_chipid();
+
+	if (adie_chipid == PRIMARY_ADIE)
+		return;
 
 	vir_addr_consys_gen_gpio_base =
 		ioremap(CONSYS_GEN_GPIO_BASE_ADDR, 0x460);
@@ -615,15 +639,16 @@ void consys_wifi_ctrl_setting_mt6835_gen(void)
 		return;
 	}
 
-	/* CONN_WF_CTRL2 swtich to GPIO mode, GPIO output value = 1 */
-	if (mtk_wcn_consys_get_adie_chipid() == SECONDARY_ADIE) {
-		CONSYS_SET_BIT(vir_addr_consys_gen_gpio_base +
-			CONSYS_GEN_GPIO_DIR5_OFFSET_ADDR, (0x1U << 20));
+	CONSYS_SET_BIT(vir_addr_consys_gen_gpio_base +
+		CONSYS_GEN_GPIO_DIR5_OFFSET_ADDR, (0x1U << 20));
+	if (adie_chipid == SECONDARY_ADIE)
 		CONSYS_SET_BIT(vir_addr_consys_gen_gpio_base +
 			CONSYS_GEN_GPIO_DOUT5_OFFSET_ADDR, (0x1U << 20));
-		CONSYS_REG_WRITE_MASK(vir_addr_consys_gen_gpio_base +
-			CONSYS_GEN_GPIO_MODE22_OFFSET_ADDR, 0x0, 0x70000);
-	}
+	else
+		CONSYS_CLR_BIT(vir_addr_consys_gen_gpio_base +
+			CONSYS_GEN_GPIO_DOUT5_OFFSET_ADDR, (0x1U << 20));
+	CONSYS_REG_WRITE_MASK(vir_addr_consys_gen_gpio_base +
+		CONSYS_GEN_GPIO_MODE22_OFFSET_ADDR, 0x0, 0x70000);
 
 	if (vir_addr_consys_gen_gpio_base)
 		iounmap(vir_addr_consys_gen_gpio_base);
@@ -716,6 +741,10 @@ void consys_wifi_ctrl_switch_conn_mode_mt6835_gen(void)
 {
 	void __iomem *vir_addr_consys_gen_gpio_base = NULL;
 
+
+	if (mtk_wcn_consys_get_adie_chipid() == PRIMARY_ADIE)
+		return;
+
 	vir_addr_consys_gen_gpio_base =
 		ioremap(CONSYS_GEN_GPIO_BASE_ADDR, 0x460);
 
@@ -726,10 +755,8 @@ void consys_wifi_ctrl_switch_conn_mode_mt6835_gen(void)
 	}
 
 	/* CONN_WF_CTRL2 swtich to CONN mode */
-	if (mtk_wcn_consys_get_adie_chipid() == SECONDARY_ADIE) {
-		CONSYS_REG_WRITE_MASK(vir_addr_consys_gen_gpio_base +
-			CONSYS_GEN_GPIO_MODE22_OFFSET_ADDR, 0x10000, 0x70000);
-	}
+	CONSYS_REG_WRITE_MASK(vir_addr_consys_gen_gpio_base +
+		CONSYS_GEN_GPIO_MODE22_OFFSET_ADDR, 0x10000, 0x70000);
 
 	if (vir_addr_consys_gen_gpio_base)
 		iounmap(vir_addr_consys_gen_gpio_base);

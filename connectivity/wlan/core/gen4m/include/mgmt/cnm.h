@@ -369,6 +369,8 @@ uint32_t cnmUpdateDbdcSetting(
 	struct ADAPTER *prAdapter,
 	u_int8_t fgDbdcEn);
 
+bool cnmDbdcIsDisabled(struct ADAPTER *prAdapter);
+
 uint8_t cnmGetDbdcBwCapability(
 	struct ADAPTER *prAdapter,
 	uint8_t ucBssIndex

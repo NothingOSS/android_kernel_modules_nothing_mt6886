@@ -1,20 +1,6 @@
+// SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (C) 2016 MediaTek Inc.
- *
- * This program is free software: you can redistribute it and/or modify it under
- * the terms of the
- * GNU General Public License version 2 as published by the Free Software
- * Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY;
- * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
- * PARTICULAR PURPOSE.
- * See the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program.
- * If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (c) 2021 MediaTek Inc.
  */
 
 #include "precomp.h"
@@ -102,10 +88,12 @@ void wmmInit(IN struct ADAPTER *prAdapter)
 	for (ucTid = 0; ucTid < WMM_TSPEC_ID_NUM; ucTid++, prTspecInfo++)
 		cnmTimerInitTimer(prAdapter, &prTspecInfo->rAddTsTimer,
 				  (PFN_MGMT_TIMEOUT_FUNC)wmmSetupTspecTimeOut,
-				  (unsigned long)ucTid);
+				  (unsigned long)ucTid,
+				  TIMER_WAKELOCK_AUTO);
 #if CFG_SUPPORT_SOFT_ACM
 	cnmTimerInitTimer(prAdapter, &prWmmInfo->rAcmDeqTimer,
-			  wmmAcmDequeueTimeOut, 0);
+			  wmmAcmDequeueTimeOut, 0,
+			  TIMER_WAKELOCK_AUTO);
 	kalMemZero(&prAdapter->rWifiVar.rWmmInfo.arAcmCtrl[0],
 		   sizeof(prAdapter->rWifiVar.rWmmInfo.arAcmCtrl));
 #endif
@@ -671,7 +659,8 @@ static void wmmQueryTsmResult(struct ADAPTER *prAdapter, unsigned long ulParam)
 			    sizeof(struct CMD_GET_TSM_STATISTICS),
 			    (uint8_t *)&rGetTsmStatistics, NULL, 0);
 	cnmTimerInitTimer(prAdapter, &prWmmInfo->rTsmTimer, wmmGetTsmRptTimeout,
-			  ulParam);
+			  ulParam,
+			  TIMER_WAKELOCK_AUTO);
 	cnmTimerStartTimer(prAdapter, &prWmmInfo->rTsmTimer, 2000);
 }
 
@@ -829,7 +818,8 @@ void wmmStartTsmMeasurement(struct ADAPTER *prAdapter, unsigned long ulParam)
 		       prTsmReq->ucTID, prTsmReq->ucACI, prTsmReq->u2Duration);
 		cnmTimerInitTimer(prAdapter, &prWMMInfo->rTsmTimer,
 				  wmmQueryTsmResult,
-				  (unsigned long)prActiveTsmReq);
+				  (unsigned long)prActiveTsmReq,
+				  TIMER_WAKELOCK_AUTO);
 		cnmTimerStartTimer(prAdapter, &prWMMInfo->rTsmTimer,
 				   TU_TO_MSEC(prTsmReq->u2Duration));
 	} else {

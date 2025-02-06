@@ -994,14 +994,21 @@ void rsnDumpSupportedAKMSuite(struct ADAPTER *prAdapter, uint8_t ucBssIndex)
 	uint8_t i;
 	struct DOT11_RSNA_CONFIG_AUTHENTICATION_SUITES_ENTRY *prEntry;
 	struct IEEE_802_11_MIB *prMib;
+	uint8_t aucLogBuf[512] = {0};
+	int32_t i4Written = 0;
 
 	prMib = aisGetMib(prAdapter, ucBssIndex);
+	i4Written += kalSnprintf(aucLogBuf + i4Written,
+		sizeof(aucLogBuf) - i4Written,
+		"Support akm list: ");
 
 	for (i = 0; i < MAX_NUM_SUPPORTED_AKM_SUITES; i++) {
 		prEntry = &prMib->dot11RSNAConfigAuthenticationSuitesTable[i];
 		if (prEntry->dot11RSNAConfigAuthenticationSuiteEnabled)
-			DBGLOG(RSN, WARN, "Support akm=0x%x\n",
-			   SWAP32(prEntry->dot11RSNAConfigAuthenticationSuite));
+			i4Written += kalSnprintf(aucLogBuf + i4Written,
+			sizeof(aucLogBuf) - i4Written,
+			"0x%x ",
+			SWAP32(prEntry->dot11RSNAConfigAuthenticationSuite));
 #if 0
 		else
 			DBGLOG(RSN, WARN, "Unsupport akm=0x%x\n",
@@ -1009,7 +1016,11 @@ void rsnDumpSupportedAKMSuite(struct ADAPTER *prAdapter, uint8_t ucBssIndex)
 #endif
 	}
 
-	DBGLOG(RSN, WARN, "Support akm bmap=0x%x\n", prMib->dot11RSNAConfigAkm);
+	i4Written += kalSnprintf(aucLogBuf + i4Written,
+				sizeof(aucLogBuf) - i4Written,
+				", Support akm bmap=0x%x\n",
+				prMib->dot11RSNAConfigAkm);
+	DBGLOG(RSN, INFO, "%s", aucLogBuf);
 }
 
 uint8_t rsnSearchFTSuite(struct ADAPTER *ad, uint8_t bssidx)
@@ -1311,6 +1322,15 @@ u_int8_t rsnPerformPolicySelection(
 		return FALSE;
 	}
 
+	/* Protection is required in this BSS. */
+	if ((prBss->u2CapInfo & CAP_INFO_PRIVACY) != 0) {
+		if (secEnabledInAis(prAdapter,
+			ucBssIndex) == FALSE) {
+			DBGLOG(RSN, INFO, "-- Protected BSS\n");
+			return FALSE;
+		}
+	}
+
 #if CFG_SUPPORT_WAPI
 	if (aisGetWapiMode(prAdapter, ucBssIndex)) {
 		if (!wapiPerformPolicySelection(prAdapter, prBss, ucBssIndex)) {
@@ -1320,15 +1340,6 @@ u_int8_t rsnPerformPolicySelection(
 		}
 	}
 #endif
-
-	/* Protection is required in this BSS. */
-	if ((prBss->u2CapInfo & CAP_INFO_PRIVACY) != 0) {
-		if (secEnabledInAis(prAdapter,
-			ucBssIndex) == FALSE) {
-			DBGLOG(RSN, INFO, "-- Protected BSS\n");
-			return FALSE;
-		}
-	}
 
 	if (eAuthMode == AUTH_MODE_WPA ||
 	    eAuthMode == AUTH_MODE_WPA_PSK ||
@@ -2098,17 +2109,14 @@ void rsnGenerateRSNIE(struct ADAPTER *prAdapter,
 			struct AIS_SPECIFIC_BSS_INFO *prAisSpecBssInfo =
 				aisGetAisSpecBssInfo(prAdapter, ucBssIndex);
 			struct GL_WPA_INFO *prWpaInfo;
-			struct BSS_DESC *prBssDesc;
 
 			prStaRec = cnmGetStaRecByIndex(prAdapter,
 						prMsduInfo->ucStaRecIndex);
 
 			prWpaInfo = aisGetWpaInfo(prAdapter, ucBssIndex);
-			prBssDesc = aisGetTargetBssDesc(prAdapter, ucBssIndex);
 
-			if (prBssDesc)
-				entry = aisSearchPmkidEntry(prAdapter,
-					prBssInfo, prBssDesc);
+			entry = aisSearchPmkidEntry(prAdapter,
+						prStaRec, ucBssIndex);
 
 			/* Fill PMKID Count and List field */
 			if (entry) {
@@ -2454,6 +2462,32 @@ void rsnParserCheckForRSNCCMPPSK(struct ADAPTER *prAdapter,
 }
 #endif
 
+static void rsnMicErrorSendMsg(struct ADAPTER *prAdapter,
+	struct STA_RECORD *prSta, u_int8_t fgFlags)
+{
+	struct MSG_MIC_ERROR *prMicErrorMsg;
+
+	prMicErrorMsg = (struct MSG_MIC_ERROR *) cnmMemAlloc(prAdapter,
+		RAM_TYPE_MSG, sizeof(struct MSG_MIC_ERROR));
+	if (!prMicErrorMsg) {
+		DBGLOG(RSN, WARN, "cnmMemAlloc Fail\n");
+		return;
+	}
+
+	prMicErrorMsg->rMsgHdr.eMsgId = MID_RSN_MIC_FAIL;
+	prMicErrorMsg->prStaRec = prSta;
+	prMicErrorMsg->fgFlags = fgFlags;
+
+	DBGLOG(RSN, LOUD,
+		"Handle Msg eMsgId:%u ucBssidx:%u fgFlags:%u\n",
+		prMicErrorMsg->rMsgHdr.eMsgId,
+		prMicErrorMsg->prStaRec->ucBssIndex,
+		prMicErrorMsg->fgFlags);
+
+	mboxSendMsg(prAdapter, MBOX_ID_0,
+		(struct MSG_HDR *) prMicErrorMsg, MSG_SEND_METHOD_BUF);
+}
+
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief This routine is called to generate an authentication event to NDIS.
@@ -2522,11 +2556,12 @@ void rsnTkipHandleMICFailure(struct ADAPTER *prAdapter,
 	DEBUGFUNC("rsnTkipHandleMICFailure");
 
 #if 1
-	rsnGenMicErrorEvent(prAdapter, prSta, fgErrorKeyType);
+	rsnMicErrorSendMsg(prAdapter, prSta, fgErrorKeyType);
 
 	/* Generate authentication request event. */
 	DBGLOG(RSN, INFO,
-	       "Generate TKIP MIC error event (type: 0%d)\n", fgErrorKeyType);
+	       "Send TKIP MIC error event msg to main thread (type: 0%d)\n",
+	       fgErrorKeyType);
 #else
 	ASSERT(prSta);
 
@@ -2564,6 +2599,25 @@ void rsnTkipHandleMICFailure(struct ADAPTER *prAdapter,
 		     u4RsnaCurrentMICFailTime);
 #endif
 }				/* rsnTkipHandleMICFailure */
+
+void rsnMicErrorHandleMsg(struct ADAPTER *prAdapter,
+		struct MSG_HDR *prMsgHdr)
+{
+	struct MSG_MIC_ERROR *prMicErrorMsg;
+
+	prMicErrorMsg = (struct MSG_MIC_ERROR *)prMsgHdr;
+
+	DBGLOG(RSN, LOUD,
+		"Handle Msg eMsgId:%u ucBssidx:%u fgFlags:%u\n",
+		prMicErrorMsg->rMsgHdr.eMsgId,
+		prMicErrorMsg->prStaRec->ucBssIndex,
+		prMicErrorMsg->fgFlags);
+
+	rsnGenMicErrorEvent(prAdapter, prMicErrorMsg->prStaRec,
+				prMicErrorMsg->fgFlags);
+
+	cnmMemFree(prAdapter, prMsgHdr);
+}
 
 /*----------------------------------------------------------------------------*/
 /*!

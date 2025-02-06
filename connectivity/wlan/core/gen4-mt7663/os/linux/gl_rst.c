@@ -1,54 +1,8 @@
-/*******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- ******************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: @(#) gl_rst.c@@
  */
@@ -96,6 +50,7 @@ u_int8_t fgIsResetHangState = SER_L0_HANG_RST_NONE;
 #endif
 
 #endif
+static uint32_t u4ProbeCount;
 
 /*******************************************************************************
  *                           P R I V A T E   D A T A
@@ -104,6 +59,12 @@ u_int8_t fgIsResetHangState = SER_L0_HANG_RST_NONE;
 #if CFG_CHIP_RESET_SUPPORT
 static struct RESET_STRUCT wifi_rst;
 u_int8_t fgIsResetting = FALSE;
+static wlanRemoveFunc pfWlanRemove;
+#if CFG_CHIP_RESET_KO_SUPPORT
+static uint32_t u4RstCount;
+static uint32_t u4PowerOffCount;
+static u_int8_t fgIsPendingForReady = FALSE;
+#endif
 #endif
 
 /*******************************************************************************
@@ -144,7 +105,7 @@ static void wait_core_dump_end(void);
  * @retval none
  */
 /*----------------------------------------------------------------------------*/
-void glResetInit(struct GLUE_INFO *prGlueInfo)
+void glResetInit(struct GLUE_INFO *prGlueInfo, wlanRemoveFunc pfRemove)
 {
 #if CFG_WMT_RESET_API_SUPPORT
 	/* 1. Register reset callback */
@@ -155,9 +116,49 @@ void glResetInit(struct GLUE_INFO *prGlueInfo)
 	INIT_WORK(&(wifi_rst.rst_trigger_work),
 		  mtk_wifi_trigger_reset);
 #endif
+#if CFG_CHIP_RESET_KO_SUPPORT
+	u4RstCount = 0;
+	u4PowerOffCount = 0;
+	fgIsPendingForReady = FALSE;
+#endif
+	pfWlanRemove = pfRemove;
+	u4ProbeCount = 0;
 	fgIsResetting = FALSE;
 	wifi_rst.prGlueInfo = prGlueInfo;
 	INIT_WORK(&(wifi_rst.rst_work), mtk_wifi_reset);
+}
+
+void glReseProbeRemoveDone(struct GLUE_INFO *prGlueInfo, int32_t i4Status,
+			   u_int8_t fgIsProbe)
+{
+	if (!prGlueInfo)
+		return;
+#if CFG_CHIP_RESET_KO_SUPPORT
+	if (fgIsProbe) {
+		if (i4Status == WLAN_STATUS_SUCCESS) {
+			send_reset_event(RESET_MODULE_TYPE_WIFI,
+					 RFSM_EVENT_PROBED);
+#if defined(_HIF_SDIO)
+			update_hif_info(HIF_INFO_SDIO_HOST,
+					prGlueInfo->rHifInfo.func);
+#endif
+		}
+	} else {
+		send_reset_event(RESET_MODULE_TYPE_WIFI, RFSM_EVENT_REMOVED);
+	}
+
+	if (fgIsPendingForReady) {
+		fgIsPendingForReady = FALSE;
+		send_reset_event(RESET_MODULE_TYPE_WIFI, RFSM_EVENT_READY);
+	}
+#endif
+
+	if (fgIsProbe) {
+		u4ProbeCount++;
+		DBGLOG(INIT, WARN,
+			"[SER][L0] %s: probe count %d, status %d\n",
+			__func__, u4ProbeCount, i4Status);
+	}
 }
 
 /*----------------------------------------------------------------------------*/
@@ -217,9 +218,10 @@ u_int8_t glResetTrigger(struct ADAPTER *prAdapter,
 	uint16_t u2FwOwnVersion;
 	uint16_t u2FwPeerVersion;
 
-	dump_stack();
 	if (kalIsResetting())
 		return fgResult;
+
+	dump_stack();
 
 	fgIsResetting = TRUE;
 	if (eResetReason != RST_BT_TRIGGER)
@@ -240,7 +242,12 @@ u_int8_t glResetTrigger(struct ADAPTER *prAdapter,
 		wifi_rst.rst_trigger_flag = u4RstFlag;
 		schedule_work(&(wifi_rst.rst_trigger_work));
 #else
+#if CFG_CHIP_RESET_KO_SUPPORT
+		send_reset_event(RESET_MODULE_TYPE_WIFI,
+				 RFSM_EVENT_TRIGGER_RESET);
+#else
 		schedule_work(&(wifi_rst.rst_work));
+#endif
 #endif
 		return fgResult;
 	}
@@ -265,8 +272,13 @@ u_int8_t glResetTrigger(struct ADAPTER *prAdapter,
 	wifi_rst.rst_trigger_flag = u4RstFlag;
 	schedule_work(&(wifi_rst.rst_trigger_work));
 #else
+#if CFG_CHIP_RESET_KO_SUPPORT
+	send_reset_event(RESET_MODULE_TYPE_WIFI,
+			 RFSM_EVENT_TRIGGER_RESET);
+#else
 	wifi_rst.prGlueInfo = prAdapter->prGlueInfo;
 	schedule_work(&(wifi_rst.rst_work));
+#endif
 #endif
 
 	return fgResult;
@@ -323,6 +335,35 @@ static void mtk_wifi_reset(struct work_struct *work)
 
 }
 
+#if CFG_CHIP_RESET_KO_SUPPORT
+void resetkoNotifyFunc(unsigned int event, void *data)
+{
+	DBGLOG(INIT, INFO, "%s: %d\n", __func__, event);
+	if (event == MODULE_NOTIFY_PRE_POWER_OFF) {
+		fgIsResetting = TRUE;
+		if ((wlanIsProbing() == FALSE) && (wlanIsRemoving() == FALSE))
+			send_reset_event(RESET_MODULE_TYPE_WIFI,
+					 RFSM_EVENT_READY);
+		else
+			fgIsPendingForReady = TRUE;
+	} else if (event == MODULE_NOTIFY_RESET_DONE) {
+		u4RstCount++;
+		DBGLOG(INIT, INFO, "%s: reset count %d\n",
+			__func__, u4RstCount);
+	} else if (event == MODULE_NOTIFY_POWER_OFF_DONE) {
+		u4PowerOffCount++;
+		DBGLOG(INIT, INFO, "%s: power off count %d\n",
+			__func__, u4PowerOffCount);
+	}
+}
+#if (RESETKO_API_VERSION == 1)
+void resetkoReset(void)
+{
+	DBGLOG(INIT, WARN, "%s\n", __func__);
+	kalRemoveProbe(wifi_rst.prGlueInfo);
+}
+#endif
+#endif
 
 #if CFG_WMT_RESET_API_SUPPORT
 
@@ -422,9 +463,10 @@ static u_int8_t is_bt_exist(void)
 	char *bt_func_name = "WF_rst_L0_notify_BT_step1";
 
 	bt_func = (p_bt_fun_type) kal_kallsyms_lookup_name(bt_func_name);
-	if (bt_func)
+	if (bt_func) {
+		kal_kallsyms_put(bt_func_name);
 		return TRUE;
-
+	}
 	DBGLOG(INIT, ERROR, "[SER][L0] %s does not exist\n", bt_func_name);
 	return FALSE;
 }
@@ -441,6 +483,7 @@ static u_int8_t rst_L0_notify_step1(void)
 			(p_bt_fun_type) kal_kallsyms_lookup_name(bt_func_name);
 		if (bt_func) {
 			bt_func(0);
+			kal_kallsyms_put(bt_func_name);
 		} else {
 			DBGLOG(INIT, ERROR,
 				"[SER][L0] %s does not exist\n", bt_func_name);
@@ -464,6 +507,7 @@ static u_int8_t rst_L0_notify_step2(void)
 			(p_bt_fun_type) kal_kallsyms_lookup_name(bt_func_name);
 		if (bt_func) {
 			bt_func();
+			kal_kallsyms_put(bt_func_name);
 		} else {
 			DBGLOG(INIT, WARN, "[SER][L0] %s does not exist\n",
 							bt_func_name);
@@ -483,6 +527,7 @@ static u_int8_t rst_L0_notify_step2(void)
 		(p_bt_fun_type) kal_kallsyms_lookup_name(bt_func_name);
 	if (bt_func) {
 		bt_func();
+		kal_kallsyms_put(bt_func_name);
 	} else {
 		DBGLOG(INIT, WARN, "[SER][L0] %s does not exist\n",
 							bt_func_name);

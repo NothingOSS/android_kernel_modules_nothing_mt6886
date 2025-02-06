@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  * Id: mgmt/rsn.c#3
  */
@@ -96,7 +50,8 @@
  *                                 M A C R O S
  *******************************************************************************
  */
-
+#define  OFFSET_NUM_2   2
+#define  OFFSET_NUM_4   4
 /*******************************************************************************
  *                   F U N C T I O N   D E C L A R A T I O N S
  *******************************************************************************
@@ -998,16 +953,14 @@ u_int8_t rsnPerformPolicySelection(
 #if CFG_SUPPORT_PASSPOINT
 	} else if (prAdapter->rWifiVar.rConnSettings.eAuthMode ==
 		   AUTH_MODE_WPA_OSEN) {
-		/* OSEN is mutual exclusion with RSN,
-		 * so we can reuse RSN's flag and variables
-		 */
-		if (prBss->fgIEOsen) {
-			prBssRsnInfo = &prBss->rRSNInfo;
-		} else {
-			DBGLOG(RSN, WARN,
-			       "OSEN Information Element does not exist.\n");
-			return FALSE;
-		}
+		prBssRsnInfo = &prBss->rRSNInfo;
+		prAdapter->rWifiVar.rConnSettings.fgAuthOsenWithRSN =
+			(prBss->fgIEOsen ? FALSE : TRUE);
+		if (prBss->fgIEOsen)
+			DBGLOG(RSN, WARN, "HS20: using OSEN.\n");
+		else
+			DBGLOG(RSN, WARN, "RSN: using OSEN (within RSN).\n");
+
 #endif
 	} else if (prAdapter->rWifiVar.rConnSettings.eEncStatus !=
 		   ENUM_ENCRYPTION1_ENABLED) {
@@ -1597,6 +1550,16 @@ uint32_t _addRSNIE_impl(IN struct ADAPTER *prAdapter,
 	return FALSE;
 }
 
+static uint8_t rsnIsOsenAuthModeWithRSN(struct ADAPTER *prAdapter)
+{
+	if (prAdapter->rWifiVar.rConnSettings.eAuthMode == AUTH_MODE_WPA_OSEN
+		&& prAdapter->rWifiVar.rConnSettings.fgAuthOsenWithRSN)
+		return TRUE;
+
+	return FALSE;
+}
+
+
 /*----------------------------------------------------------------------------*/
 /*!
  *
@@ -1824,6 +1787,7 @@ void rsnGenerateRSNIE(IN struct ADAPTER *prAdapter,
 		|| (prAdapter->rWifiVar.rConnSettings.eAuthMode ==
 		AUTH_MODE_WPA2_SAE)
 #endif
+		|| rsnIsOsenAuthModeWithRSN(prAdapter)
 		))) {
 		/* Construct a RSN IE for association request frame. */
 		RSN_IE(pucBuffer)->ucElemId = ELEM_ID_RSN;
@@ -1862,13 +1826,49 @@ void rsnGenerateRSNIE(IN struct ADAPTER *prAdapter,
 
 		cp = pucBuffer + sizeof(struct RSN_INFO_ELEM);
 
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+		if ((prBssInfo->eNetworkType == NETWORK_TYPE_P2P) &&
+			(prBssInfo->u4RsnSelectedAKMSuite ==
+			RSN_AKM_SUITE_SAE)) {
+			struct P2P_SPECIFIC_BSS_INFO *prP2pSpecBssInfo =
+				prAdapter->rWifiVar.prP2pSpecificBssInfo
+				[prBssInfo->u4PrivateData];
+			uint8_t i = 0;
+
+			/* AKM suite count */
+			WLAN_SET_FIELD_16(cp,
+				prP2pSpecBssInfo->u2KeyMgtSuiteCount);
+			cp += OFFSET_NUM_2;
+
+			/* AKM suite */
+			for (i = 0;
+				i < prP2pSpecBssInfo->u2KeyMgtSuiteCount;
+				i++) {
+				DBGLOG(RSN, TRACE, "KeyMgtSuite 0x%04x\n",
+					prP2pSpecBssInfo->au4KeyMgtSuite[i]);
+				WLAN_SET_FIELD_32(cp,
+					prP2pSpecBssInfo->au4KeyMgtSuite[i]);
+				cp += OFFSET_NUM_4;
+			}
+
+			RSN_IE(pucBuffer)->ucLength +=
+				(prP2pSpecBssInfo->u2KeyMgtSuiteCount - 1) * 4;
+		} else {
+			WLAN_SET_FIELD_16(cp, 1);	/* AKM suite count */
+			cp += OFFSET_NUM_2;
+			/* AKM suite */
+			WLAN_SET_FIELD_32(cp, GET_BSS_INFO_BY_INDEX(prAdapter,
+			    ucBssIndex)->u4RsnSelectedAKMSuite);
+			cp += OFFSET_NUM_4;
+		}
+#else
 		WLAN_SET_FIELD_16(cp, 1);	/* AKM suite count */
 		cp += 2;
 		/* AKM suite */
 		WLAN_SET_FIELD_32(cp, GET_BSS_INFO_BY_INDEX(prAdapter,
 				    ucBssIndex)->u4RsnSelectedAKMSuite);
 		cp += 4;
-
+#endif
 		/* Capabilities */
 		WLAN_SET_FIELD_16(cp, GET_BSS_INFO_BY_INDEX(prAdapter,
 				  ucBssIndex)->u2RsnSelectedCapInfo);
@@ -2009,6 +2009,47 @@ void rsnGenerateRSNIE(IN struct ADAPTER *prAdapter,
 
 }				/* rsnGenerateRSNIE */
 
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+void rsnGenerateRSNXIE(IN struct ADAPTER *prAdapter,
+	IN struct MSDU_INFO *prMsduInfo)
+{
+	struct P2P_SPECIFIC_BSS_INFO *prP2pSpecBssInfo;
+	struct BSS_INFO *prBssInfo;
+	uint8_t ucBssIndex;
+
+	ucBssIndex = prMsduInfo->ucBssIndex;
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+
+	if (!prBssInfo)
+		return;
+
+	/* AP + GO */
+	if (!IS_BSS_APGO(prBssInfo))
+		return;
+
+	prP2pSpecBssInfo =
+		prAdapter->rWifiVar.
+		prP2pSpecificBssInfo[prBssInfo->u4PrivateData];
+
+	if (prP2pSpecBssInfo &&
+		(prP2pSpecBssInfo->u2RsnxIeLen != 0)) {
+		uint8_t *pucBuffer =
+			(uint8_t *) ((unsigned long)
+			prMsduInfo->prPacket + (unsigned long)
+			prMsduInfo->u2FrameLength);
+
+		kalMemCopy(pucBuffer,
+			prP2pSpecBssInfo->aucRsnxIeBuffer,
+			prP2pSpecBssInfo->u2RsnxIeLen);
+		prMsduInfo->u2FrameLength +=
+			prP2pSpecBssInfo->u2RsnxIeLen;
+
+		DBGLOG(RSN, INFO,
+			"Keep supplicant RSNXIE content w/o update\n");
+	}
+}
+#endif
+
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief Parse the given IE buffer and check if it is WFA IE and return Type
@@ -2075,7 +2116,7 @@ void rsnParserCheckForRSNCCMPPSK(struct ADAPTER *prAdapter,
 {
 
 	struct RSN_INFO rRsnIe;
-	struct BSS_INFO *prBssInfo;
+	struct BSS_INFO *prBssInfo = NULL;
 	uint8_t i;
 	uint16_t statusCode;
 
@@ -2084,6 +2125,12 @@ void rsnParserCheckForRSNCCMPPSK(struct ADAPTER *prAdapter,
 	ASSERT(prStaRec);
 	ASSERT(pu2StatusCode);
 
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter,
+						prStaRec->ucBssIndex);
+	if (!prBssInfo) {
+		DBGLOG(RSN, ERROR, "prBssInfo is null\n");
+		return;
+	}
 	*pu2StatusCode = STATUS_CODE_INVALID_INFO_ELEMENT;
 
 	if (rsnParseRsnIE(prAdapter, prIe, &rRsnIe)) {
@@ -2107,7 +2154,15 @@ void rsnParserCheckForRSNCCMPPSK(struct ADAPTER *prAdapter,
 		}
 
 		if ((rRsnIe.u4AuthKeyMgtSuiteCount != 1)
-		    || (rRsnIe.au4AuthKeyMgtSuite[0] != RSN_AKM_SUITE_PSK)) {
+			|| ((rRsnIe.au4AuthKeyMgtSuite[0] != RSN_AKM_SUITE_PSK)
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+			&& (rRsnIe.au4AuthKeyMgtSuite[0] != RSN_AKM_SUITE_SAE)
+#endif
+#if CFG_SUPPORT_SOFTAP_OWE
+			&& (rRsnIe.au4AuthKeyMgtSuite[0] != RSN_AKM_SUITE_OWE)
+#endif
+			)) {
+			DBGLOG(RSN, WARN, "RSN with invalid AKMP\n");
 			*pu2StatusCode = STATUS_CODE_INVALID_AKMP;
 			return;
 		}
@@ -2120,7 +2175,16 @@ void rsnParserCheckForRSNCCMPPSK(struct ADAPTER *prAdapter,
 		/* 1st check: if already PMF connection, reject assoc req:
 		 * error 30 ASSOC_REJECTED_TEMPORARILY
 		 */
+#if CFG_SUPPORT_SOFTAP_OWE
+		if (prBssInfo->u4RsnSelectedAKMSuite ==
+			RSN_AKM_SUITE_OWE)
+			DBGLOG(RSN, INFO, "[OWE] Ignore PMF check\n");
+		else if (rsnCheckBipKeyInstalled(prAdapter, prStaRec)) {
+#else
 		if (rsnCheckBipKeyInstalled(prAdapter, prStaRec)) {
+#endif
+			DBGLOG(AAA, INFO,
+				"Drop RxAssoc\n");
 			*pu2StatusCode = STATUS_CODE_ASSOC_REJECTED_TEMPORARILY;
 			return;
 		}
@@ -2136,6 +2200,10 @@ void rsnParserCheckForRSNCCMPPSK(struct ADAPTER *prAdapter,
 		prStaRec->rPmfCfg.fgMfpr = (rRsnIe.u2RsnCap &
 					    ELEM_WPA_CAP_MFPR) ? 1 : 0;
 
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+		prStaRec->rPmfCfg.fgSaeRequireMfp = FALSE;
+#endif
+
 		for (i = 0; i < rRsnIe.u4AuthKeyMgtSuiteCount; i++) {
 			if ((rRsnIe.au4AuthKeyMgtSuite[i] ==
 			     RSN_AKM_SUITE_802_1X_SHA256) ||
@@ -2145,6 +2213,14 @@ void rsnParserCheckForRSNCCMPPSK(struct ADAPTER *prAdapter,
 				prStaRec->rPmfCfg.fgSha256 = TRUE;
 				break;
 			}
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+			else if (rRsnIe.au4AuthKeyMgtSuite[i] ==
+				RSN_AKM_SUITE_SAE) {
+				DBGLOG(RSN, INFO, "STA SAE support\n");
+				prStaRec->rPmfCfg.fgSaeRequireMfp = TRUE;
+				break;
+			}
+#endif
 		}
 
 		DBGLOG(RSN, INFO,
@@ -2152,9 +2228,6 @@ void rsnParserCheckForRSNCCMPPSK(struct ADAPTER *prAdapter,
 		       prStaRec->rPmfCfg.fgMfpc, prStaRec->rPmfCfg.fgMfpr,
 		       prStaRec->rPmfCfg.fgSha256, prStaRec->ucBssIndex,
 		       prStaRec->rPmfCfg.fgApplyPmf);
-
-		prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter,
-						  prStaRec->ucBssIndex);
 
 		/* if PMF validation fail, return success as legacy association
 		 */
@@ -2769,7 +2842,7 @@ uint8_t rsnCheckSaQueryTimeout(IN struct ADAPTER *prAdapter)
 	GET_CURRENT_SYSTIME(&now);
 
 	if (CHECK_FOR_TIMEOUT(now, prBssSpecInfo->u4SaQueryStart,
-			      TU_TO_MSEC(1000))) {
+			      TU_TO_MSEC(SA_QUERY_RETRY_TIMEOUT))) {
 		DBGLOG(RSN, INFO, "association SA Query timed out\n");
 
 		prBssSpecInfo->ucSaQueryTimedOut = 1;
@@ -2956,10 +3029,10 @@ void rsnStartSaQueryTimer(IN struct ADAPTER *prAdapter,
 	nicTxEnqueueMsdu(prAdapter, prMsduInfo);
 
 	DBGLOG(RSN, INFO, "Set SA Query timer %d (%d Tu)",
-	       prBssSpecInfo->u4SaQueryCount, 201);
+	       prBssSpecInfo->u4SaQueryCount, SA_QUERY_TIMEOUT);
 
 	cnmTimerStartTimer(prAdapter, &prBssSpecInfo->rSaQueryTimer,
-			   TU_TO_MSEC(201));
+			   TU_TO_MSEC(SA_QUERY_TIMEOUT));
 
 }
 
@@ -3379,6 +3452,16 @@ uint16_t rsnPmfCapableValidation(IN struct ADAPTER
 				"PMF policy violation for case 7\n");
 			return STATUS_CODE_ROBUST_MGMT_FRAME_POLICY_VIOLATION;
 		}
+
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+		if ((prBssInfo->u4RsnSelectedAKMSuite ==
+			RSN_AKM_SUITE_SAE) &&
+			prStaRec->rPmfCfg.fgSaeRequireMfp) {
+			DBGLOG(RSN, ERROR,
+				"PMF policy violation for case sae_require_mfp\n");
+			return STATUS_CODE_ROBUST_MGMT_FRAME_POLICY_VIOLATION;
+		}
+#endif
 	}
 
 	if ((selfMfpc == TRUE) && (peerMfpc == TRUE)) {
@@ -3452,7 +3535,7 @@ uint8_t rsnApCheckSaQueryTimeout(IN struct ADAPTER
 	GET_CURRENT_SYSTIME(&now);
 
 	if (CHECK_FOR_TIMEOUT(now, prStaRec->rPmfCfg.u4SAQueryStart,
-			      TU_TO_MSEC(1000))) {
+			      TU_TO_MSEC(SA_QUERY_RETRY_TIMEOUT))) {
 		DBGLOG(RSN, INFO, "association SA Query timed out\n");
 
 		/* XXX PMF TODO how to report STA REC disconnect?? */
@@ -3504,9 +3587,9 @@ uint8_t rsnApCheckSaQueryTimeout(IN struct ADAPTER
  */
 /*----------------------------------------------------------------------------*/
 void rsnApStartSaQueryTimer(IN struct ADAPTER *prAdapter,
-			    IN struct STA_RECORD *prStaRec,
 			    IN unsigned long ulParamPtr)
 {
+	struct STA_RECORD *prStaRec = (struct STA_RECORD *) ulParamPtr;
 	struct BSS_INFO *prBssInfo;
 	struct MSDU_INFO *prMsduInfo;
 	struct ACTION_SA_QUERY_FRAME *prTxFrame;
@@ -3589,10 +3672,10 @@ void rsnApStartSaQueryTimer(IN struct ADAPTER *prAdapter,
 	nicTxEnqueueMsdu(prAdapter, prMsduInfo);
 
 	DBGLOG(RSN, INFO, "AP Set SA Query timer %d (%d Tu)\n",
-	       prStaRec->rPmfCfg.u4SAQueryCount, 201);
+	       prStaRec->rPmfCfg.u4SAQueryCount, SA_QUERY_TIMEOUT);
 
 	cnmTimerStartTimer(prAdapter,
-			   &prStaRec->rPmfCfg.rSAQueryTimer, TU_TO_MSEC(201));
+		&prStaRec->rPmfCfg.rSAQueryTimer, TU_TO_MSEC(SA_QUERY_TIMEOUT));
 
 }
 
@@ -3619,11 +3702,12 @@ void rsnApStartSaQuery(IN struct ADAPTER *prAdapter,
 	cnmTimerInitTimer(prAdapter,
 			  &prStaRec->rPmfCfg.rSAQueryTimer,
 			(PFN_MGMT_TIMEOUT_FUNC)rsnApStartSaQueryTimer,
-				 (unsigned long) prStaRec);
+				 (unsigned long) prStaRec,
+				TIMER_WAKELOCK_AUTO);
 
 	if (prStaRec->rPmfCfg.u4SAQueryCount == 0)
-		rsnApStartSaQueryTimer(prAdapter, prStaRec,
-				       (unsigned long)NULL);
+		rsnApStartSaQueryTimer(prAdapter,
+				       (unsigned long)prStaRec);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -4085,7 +4169,7 @@ void rsnGenerateFTIE(IN struct ADAPTER *prAdapter,
 	kalMemCopy(pucBuffer, prFtIEs->prFTIE, ucFtIeSize);
 }
 
-#if CFG_SUPPORT_OWE
+#if CFG_SUPPORT_OWE || CFG_SUPPORT_SOFTAP_OWE
 /*----------------------------------------------------------------------------*/
 /*!
  *
@@ -4105,30 +4189,78 @@ void rsnGenerateOWEIE(IN struct ADAPTER *prAdapter,
 		      IN OUT struct MSDU_INFO *prMsduInfo)
 {
 	uint8_t *pucBuffer = NULL;
-	struct CONNECTION_SETTINGS *prConnSettings = NULL;
+	uint8_t ucBssIndex = 0;
+#if CFG_SUPPORT_OWE
 	uint8_t ucLength = 0;
+	struct CONNECTION_SETTINGS *prConnSettings = NULL;
+#endif
+#if CFG_SUPPORT_SOFTAP_OWE
+	struct P2P_SPECIFIC_BSS_INFO *prP2pSpecBssInfo = NULL;
+#endif
+	struct BSS_INFO *prBssInfo = NULL;
 
-	DBGLOG(RSN, INFO, "rsnGenerateOWEIE\n");
-	prConnSettings = &prAdapter->rWifiVar.rConnSettings;
+	ucBssIndex = prMsduInfo->ucBssIndex;
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
 
-	if (prConnSettings->rOweInfo.ucLength == 0)
+	if (!prBssInfo)
 		return;
-	ucLength = prConnSettings->rOweInfo.ucLength + 2;
-	ASSERT(prMsduInfo);
 
-	pucBuffer = (uint8_t *) ((unsigned long)
+	if (!IS_BSS_APGO(prBssInfo) && !IS_BSS_AIS(prBssInfo))
+		return;
+#if CFG_SUPPORT_SOFTAP_OWE
+	else if (IS_BSS_APGO(prBssInfo)) {
+		prP2pSpecBssInfo =
+			prAdapter->rWifiVar.prP2pSpecificBssInfo
+			[prBssInfo->u4PrivateData];
+
+		if (prP2pSpecBssInfo &&
+			(prP2pSpecBssInfo->u2OweIeLen != 0)) {
+			pucBuffer =
+				(uint8_t *) ((unsigned long)
+				prMsduInfo->prPacket + (unsigned long)
+				prMsduInfo->u2FrameLength);
+
+			kalMemCopy(pucBuffer,
+				prP2pSpecBssInfo->aucOweIeBuffer,
+				prP2pSpecBssInfo->u2OweIeLen);
+			prMsduInfo->u2FrameLength +=
+				prP2pSpecBssInfo->u2OweIeLen;
+
+			DBGLOG(RSN, INFO,
+			    "[OWE] Keep supplicant OWEIE content w/o update\n");
+		}
+	}
+#endif
+#if CFG_SUPPORT_OWE
+	else if (IS_BSS_AIS(prBssInfo)) {
+		prConnSettings =
+			&prAdapter->rWifiVar.rConnSettings;
+
+		if (prConnSettings->rOweInfo.ucLength == 0)
+			return;
+
+		ucLength = prConnSettings->rOweInfo.ucLength + 2;
+
+		pucBuffer = (uint8_t *) ((unsigned long)
 				 prMsduInfo->prPacket + (unsigned long)
 				 prMsduInfo->u2FrameLength);
-	ASSERT(pucBuffer);
 
-	/* if (eNetworkId != NETWORK_TYPE_AIS_INDEX) */
-	/* return; */
-	kalMemCopy(pucBuffer, &(prAdapter->rWifiVar.rConnSettings.rOweInfo),
-		   ucLength);
-	prMsduInfo->u2FrameLength += IE_SIZE(pucBuffer);
-	DBGLOG_MEM8(RSN, INFO, pucBuffer, IE_SIZE(pucBuffer));
+		if (!pucBuffer)
+			return;
+		/* if (eNetworkId != NETWORK_TYPE_AIS_INDEX) */
+		/* return; */
+
+		kalMemCopy(pucBuffer,
+			   &(prAdapter->rWifiVar.rConnSettings.rOweInfo),
+			   ucLength);
+		prMsduInfo->u2FrameLength += IE_SIZE(pucBuffer);
+
+		DBGLOG_MEM8(RSN, INFO, pucBuffer, IE_SIZE(pucBuffer));
+	}
+#endif
 }
-
+#endif
+#if CFG_SUPPORT_OWE
 /*----------------------------------------------------------------------------*/
 /*!
  *

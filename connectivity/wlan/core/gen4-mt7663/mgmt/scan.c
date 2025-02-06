@@ -1,14 +1,7 @@
+// SPDX-License-Identifier: BSD-2-Clause
 /*
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
+ * Copyright (c) 2021 MediaTek Inc.
  */
-
 
 /*******************************************************************************
  *                         C O M P I L E R   F L A G S
@@ -1594,6 +1587,7 @@ struct BSS_DESC *scanAddToBssDesc(IN struct ADAPTER *prAdapter,
 
 	uint8_t *pucIE;
 	uint16_t u2IELength;
+	int32_t iPayloadOffset = 0;
 	uint16_t u2Offset = 0;
 
 	struct WLAN_BEACON_FRAME *prWlanBeaconFrame
@@ -1620,9 +1614,20 @@ struct BSS_DESC *scanAddToBssDesc(IN struct ADAPTER *prAdapter,
 	u_int8_t fgIsProbeResp = FALSE;
 	u_int8_t ucPowerConstraint = 0;
 	struct IE_COUNTRY *prCountryIE = NULL;
+#if CFG_SUPPORT_DISABLE_OBSS_SCAN
+	uint8_t *pucObssScanIE = NULL;
+	uint16_t u2ObssScanOffset = 0;
+	uint16_t u2ObssScanIESize = 0;
+#endif
 
-	ASSERT(prAdapter);
-	ASSERT(prSwRfb);
+	if (prAdapter == NULL) {
+		DBGLOG(SCN, ERROR, "prAdapter is NULL\n");
+		return NULL;
+	}
+	if (prSwRfb == NULL) {
+		DBGLOG(SCN, ERROR, "prSwRfb is NULL\n");
+		return NULL;
+	}
 
 	eHwBand = HAL_RX_STATUS_GET_RF_BAND(prSwRfb->prRxStatus);
 	prWlanBeaconFrame = (struct WLAN_BEACON_FRAME *) prSwRfb->pvHeader;
@@ -1663,16 +1668,6 @@ struct BSS_DESC *scanAddToBssDesc(IN struct ADAPTER *prAdapter,
 	pucIE = prWlanBeaconFrame->aucInfoElem;
 	u2IELength = (prSwRfb->u2PacketLen - prSwRfb->u2HeaderLen) -
 	    (uint16_t) OFFSET_OF(struct WLAN_BEACON_FRAME_BODY, aucInfoElem[0]);
-
-	if (u2IELength > CFG_IE_BUFFER_SIZE) {
-		/* Give an warning msg when IE is going to be
-		 * truncated.
-		 */
-		DBGLOG(SCN, ERROR,
-			"IE len(%u) > Max IE buffer size(%u), truncate IE!\n",
-			u2IELength, CFG_IE_BUFFER_SIZE);
-		u2IELength = CFG_IE_BUFFER_SIZE;
-	}
 	kalMemZero(&rSsid, sizeof(rSsid));
 	IE_FOR_EACH(pucIE, u2IELength, u2Offset) {
 		switch (IE_ID(pucIE)) {
@@ -1726,10 +1721,33 @@ struct BSS_DESC *scanAddToBssDesc(IN struct ADAPTER *prAdapter,
 				ucIeHtChannelNum = ((struct IE_HT_OP *) pucIE)
 					->ucPrimaryChannel;
 			break;
+#if CFG_SUPPORT_DISABLE_OBSS_SCAN
+		case ELEM_ID_OBSS_SCAN_PARAMS:
+			pucObssScanIE = pucIE;
+			u2ObssScanOffset = u2Offset;
+			break;
+#endif
 		default:
 			break;
 		}
 	}
+
+#if CFG_SUPPORT_DISABLE_OBSS_SCAN
+	if (pucObssScanIE) {
+		u2ObssScanIESize = IE_SIZE(pucObssScanIE);
+		/* delete the obss scan ie */
+		if ((u2ObssScanOffset + 2 <= u2IELength) &&
+			(u2ObssScanOffset + u2ObssScanIESize <= u2IELength)) {
+			kalMemCopy(pucObssScanIE,
+			  pucObssScanIE + u2ObssScanIESize,
+			  u2IELength - u2ObssScanOffset - u2ObssScanIESize);
+		}
+
+		prSwRfb->u2PacketLen -= u2ObssScanIESize;
+		u2IELength -= u2ObssScanIESize;
+		DBGLOG(SCN, WARN, "Delete OBSS IE in Bcn/PrbRsp\n");
+	}
+#endif
 
 	/**
 	 * Set band mismatch flag if we receive Beacon/ProbeResp in 2.4G band,
@@ -1842,25 +1860,24 @@ struct BSS_DESC *scanAddToBssDesc(IN struct ADAPTER *prAdapter,
 
 		if (prBssDesc->eBSSType != eBSSType) {
 			prBssDesc->eBSSType = eBSSType;
-		} else if (HAL_RX_STATUS_GET_CHNL_NUM(prSwRfb->prRxStatus) !=
-			prBssDesc->ucChannelNum
-			&& prBssDesc->ucRCPI
-			> nicRxGetRcpiValueFromRxv(RCPI_MODE_MAX, prSwRfb)) {
-			uint8_t ucRcpi = 0;
-
+		} else if (HAL_RX_STATUS_GET_CHNL_NUM(prSwRfb->prRxStatus)
+			== prBssDesc->ucChannelNum) {
 			/* for signal strength is too much weaker and
 			 * previous beacon is not stale
 			 */
+			uint8_t ucRcpi = 0;
 			ASSERT(prSwRfb->prRxStatusGroup3);
 			ucRcpi = nicRxGetRcpiValueFromRxv(RCPI_MODE_MAX,
 				prSwRfb);
-			if ((prBssDesc->ucRCPI - ucRcpi)
-			    >= REPLICATED_BEACON_STRENGTH_THRESHOLD
-			    && rCurrentTime - prBssDesc->rUpdateTime
-			    <= REPLICATED_BEACON_FRESH_PERIOD) {
-				log_dbg(SCN, TRACE, "rssi(%u) is too much weaker and previous one(%u) is fresh\n",
-					ucRcpi, prBssDesc->ucRCPI);
-				return prBssDesc;
+			if (prBssDesc->ucRCPI > ucRcpi) {
+				if ((prBssDesc->ucRCPI - ucRcpi)
+				    >= REPLICATED_BEACON_STRENGTH_THRESHOLD
+				    && rCurrentTime - prBssDesc->rUpdateTime
+				    <= REPLICATED_BEACON_FRESH_PERIOD) {
+					log_dbg(SCN, TRACE, "rssi(%u) is too much weaker and previous one(%u) is fresh\n",
+						ucRcpi, prBssDesc->ucRCPI);
+					return prBssDesc;
+				}
 			}
 			/* for received beacons too close in time domain */
 			else if (rCurrentTime - prBssDesc->rUpdateTime
@@ -1920,14 +1937,32 @@ struct BSS_DESC *scanAddToBssDesc(IN struct ADAPTER *prAdapter,
 		DBGLOG(SCN, WARN,
 			"Pkt len(%u) > Max RAW buffer size(%u), truncate it!\n",
 			prSwRfb->u2PacketLen, CFG_RAW_BUFFER_SIZE);
-}
+	}
 	if (fgIsProbeResp || fgIsValidSsid) {
 		kalMemCopy(prBssDesc->aucRawBuf, prWlanBeaconFrame,
 			prBssDesc->u2RawLength);
+
+		iPayloadOffset =
+			(uint16_t) OFFSET_OF(struct WLAN_BEACON_FRAME,
+						aucInfoElem[0]);
+		prBssDesc->pucIeBuf = prBssDesc->aucRawBuf + iPayloadOffset;
+		if (prBssDesc->u2RawLength < iPayloadOffset) {
+			DBGLOG(SCN, ERROR,
+			"prBssDesc->u2RawLength is less than to iPayloadOffset\n");
+			prBssDesc->u2IELength = 0;
+		} else {
+			prBssDesc->u2IELength =
+			prBssDesc->u2RawLength - iPayloadOffset;
+		}
+		u2IELength = prBssDesc->u2IELength;
 	}
 
 	/* NOTE: Keep consistency of Scan Record during JOIN process */
-	if (fgIsNewBssDesc == FALSE && prBssDesc->fgIsConnecting) {
+	/* NOTE: AP channel which has been changed may be bss update */
+	/* like a new bss desc case  */
+	if ((fgIsNewBssDesc == FALSE) && (prBssDesc->fgIsConnecting) &&
+		(prBssDesc->ucChannelNum
+		== HAL_RX_STATUS_GET_CHNL_NUM(prSwRfb->prRxStatus))) {
 		log_dbg(SCN, TRACE, "we're connecting this BSS("
 			MACSTR ") now, don't update it\n",
 			MAC2STR(prBssDesc->aucBSSID));
@@ -1948,24 +1983,7 @@ struct BSS_DESC *scanAddToBssDesc(IN struct ADAPTER *prAdapter,
 
 	prBssDesc->u2CapInfo = u2CapInfo;
 
-	/* 4 <2.1> Retrieve IEs for later parsing */
-	u2IELength = (prSwRfb->u2PacketLen - prSwRfb->u2HeaderLen) -
-	    (uint16_t) OFFSET_OF(struct WLAN_BEACON_FRAME_BODY, aucInfoElem[0]);
-
-	if (u2IELength > CFG_IE_BUFFER_SIZE) {
-		u2IELength = CFG_IE_BUFFER_SIZE;
-		prBssDesc->fgIsIEOverflow = TRUE;
-		DBGLOG(SCN, WARN, "IE is truncated!\n");
-	} else {
-		prBssDesc->fgIsIEOverflow = FALSE;
-	}
-	prBssDesc->u2IELength = u2IELength;
-
-	if (fgIsProbeResp || fgIsValidSsid) {
-		kalMemCopy(prBssDesc->aucIEBuf, prWlanBeaconFrame->aucInfoElem,
-		u2IELength);
-	}
-	/* 4 <2.2> reset prBssDesc variables in case that AP
+	/* 4 <2.1> reset prBssDesc variables in case that AP
 	 * has been reconfigured
 	 */
 	prBssDesc->fgIsERPPresent = FALSE;
@@ -2734,8 +2752,8 @@ uint32_t scanAddScanResult(IN struct ADAPTER *prAdapter,
 	rConfiguration.rFHConfig.u4Length
 		= sizeof(struct PARAM_802_11_CONFIG_FH);
 
-	rateGetDataRatesFromRateSet(prBssDesc->u2OperationalRateSet, 0,
-		aucRatesEx, &ucRateLen);
+	rateGetDataRatesFromRateSet(prBssDesc->u2OperationalRateSet,
+		(uint16_t)0, aucRatesEx, &ucRateLen);
 
 	/* NOTE(Kevin): Set unused entries, if any, at the end of the
 	 * array to 0 from OID_802_11_BSSID_LIST
@@ -3950,8 +3968,6 @@ void scanReportBss2Cfg80211(IN struct ADAPTER *prAdapter,
 							RCPI_TO_dBm(
 							prBssDesc->ucRCPI));
 					}
-					kalMemZero(prBssDesc->aucRawBuf,
-						CFG_RAW_BUFFER_SIZE);
 					prBssDesc->u2RawLength = 0;
 #if CFG_ENABLE_WIFI_DIRECT
 					prBssDesc->fgIsP2PReport = FALSE;
@@ -4008,7 +4024,7 @@ void scanReportBss2Cfg80211(IN struct ADAPTER *prAdapter,
 		}
 #if CFG_AUTO_CHANNEL_SEL_SUPPORT
 		wlanCalculateAllChannelDirtiness(prAdapter);
-		wlanSortChannel(prAdapter);
+		wlanSortChannel(prAdapter, CHNL_SORT_POLICY_ALL_CN);
 
 		prAdapter->rWifiVar.rChnLoadInfo.fgDataReadyBit = TRUE;
 #endif

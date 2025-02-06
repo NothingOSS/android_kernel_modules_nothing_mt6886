@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*! \file   "que_mgt.c"
  *    \brief  TX/RX queues management
  *
@@ -69,6 +23,7 @@
  */
 #include "precomp.h"
 #include "queue.h"
+#include "nic_tx.h"
 
 /*******************************************************************************
  *                              C O N S T A N T S
@@ -306,7 +261,8 @@ void qmInit(IN struct ADAPTER *prAdapter,
 		cnmTimerInitTimer(prAdapter,
 			&(prQM->arRxBaTable[u4Idx].rReorderBubbleTimer),
 			(PFN_MGMT_TIMEOUT_FUNC) qmHandleReorderBubbleTimeout,
-			(unsigned long) (&prQM->arRxBaTable[u4Idx]));
+			(unsigned long) (&prQM->arRxBaTable[u4Idx]),
+			TIMER_WAKELOCK_AUTO);
 
 	}
 	prQM->ucRxBaCount = 0;
@@ -635,6 +591,7 @@ void qmDeactivateStaRec(IN struct ADAPTER *prAdapter,
 	prStaRec->fgIsValid = FALSE;
 	prStaRec->fgIsInPS = FALSE;
 	prStaRec->fgIsTxKeyReady = FALSE;
+	prStaRec->fg1xKey4Done = FALSE;
 
 	/* Reset buffer count  */
 	prStaRec->ucFreeQuota = 0;
@@ -1011,7 +968,8 @@ struct QUE *qmDetermineStaTxQueue(IN struct ADAPTER *prAdapter,
 		prTxQue = prStaRec->aprTargetQueue[ucQueIdx];
 	} else if (secIsProtectedBss(prAdapter, prBssInfo) &&
 		prMsduInfo->fgIs802_1x &&
-		prMsduInfo->fgIs802_1x_NonProtected) {
+		prMsduInfo->fgIs802_1x_NonProtected &&
+		!prAdapter->fgIsPostponeTxEAPOLM3) {
 		/* protected BSS without key set */
 		/* Tx pairwise EAPOL 1x packet (non-protected frame) */
 		prTxQue = &prStaRec->arTxQueue[ucQueIdx];
@@ -1095,6 +1053,12 @@ void qmSetStaRecTxAllowed(IN struct ADAPTER *prAdapter,
 
 	}
 	prStaRec->fgIsTxAllowed = fgIsTxAllowed;
+
+	/* Start tx the pending frame for TX Direct path */
+	if (prStaRec->fgIsTxAllowed &&
+	    HAL_IS_TX_DIRECT(prGlueInfo->prAdapter)) {
+		nicTxDirectStartCheckQTimer(prAdapter);
+	}
 }
 
 /*----------------------------------------------------------------------------*/
@@ -4030,6 +3994,7 @@ void qmInsertReorderPkt(IN struct ADAPTER *prAdapter,
 	uint32_t u4SeqNo;
 	uint32_t u4WinStart;
 	uint32_t u4WinEnd;
+	struct STA_RECORD *prStaRec = prSwRfb->prStaRec;
 
 	/* Start to reorder packets */
 	u4SeqNo = (uint32_t) (prSwRfb->u2SSN);
@@ -4053,23 +4018,52 @@ void qmInsertReorderPkt(IN struct ADAPTER *prAdapter,
 
 #if QM_RX_WIN_SSN_AUTO_ADVANCING
 		if (prReorderQueParm->fgIsWaitingForPktWithSsn) {
-			/* Let the first received packet
-			 * pass the reorder check
-			 */
-			DBGLOG(QM, LOUD, "QM:(A)[%d](%u){%u,%u}\n",
-				prSwRfb->ucTid, u4SeqNo, u4WinStart, u4WinEnd);
+			uint8_t fgNoWating = FALSE;
 
-			prReorderQueParm->u2WinStart = (uint16_t) u4SeqNo;
-			prReorderQueParm->u2WinEnd =
-				((prReorderQueParm->u2WinStart) +
-				 (prReorderQueParm->u2WinSize) - 1) %
-				 MAX_SEQ_NO_COUNT;
-			prReorderQueParm->fgIsWaitingForPktWithSsn = FALSE;
+			if (u4WinStart != u4SeqNo) {
+				/* Handle the case: SSN < the last rx pkt SN */
+				/* e.g. SN0 SN1 SN2  SN3 AddBaSSN1 SN4 */
+				uint8_t fgLastRx = (prStaRec->
+					au2CachedSeqCtrl[prSwRfb->ucTid]
+					== 0xFFFF) ? FALSE : TRUE;
+				uint16_t u2LastRxSN = prStaRec->
+					au2CachedSeqCtrl[prSwRfb->ucTid]
+					>> RX_STATUS_SEQ_NUM_OFFSET;
+
+				/* advance SSN to last Rx SN + 1  */
+				if (fgLastRx &&
+				    ((u2LastRxSN + 1) % MAX_SEQ_NO_COUNT
+				    == u4SeqNo)) {
+					DBGLOG(QM, LOUD,
+						"QM:(A)[%d](%u){%u,%u}\n",
+						prSwRfb->ucTid, u4SeqNo,
+						u4WinStart, u4WinEnd);
+
+					prReorderQueParm->u2WinStart =
+						(uint16_t) u4SeqNo;
+					prReorderQueParm->u2WinEnd =
+						((prReorderQueParm->u2WinStart)
+						+ (prReorderQueParm->u2WinSize)
+						- 1) % MAX_SEQ_NO_COUNT;
+					fgNoWating = TRUE;
+				} else {
+					DBGLOG(QM, LOUD,
+						"QM:(A) [%d](%u) LastRx(%u,%u)\n",
+						prSwRfb->ucTid, u4SeqNo,
+						fgLastRx, u2LastRxSN);
+				}
+			} else
+				fgNoWating = TRUE;
+
+			if (fgNoWating) {
+				prReorderQueParm->fgIsWaitingForPktWithSsn
+					= FALSE;
 #if CFG_SUPPORT_RX_AMSDU
-			/* RX reorder for one MSDU in AMSDU issue */
-			prReorderQueParm->u8LastAmsduSubIdx =
-				RX_PAYLOAD_FORMAT_MSDU;
+				/* RX reorder for one MSDU in AMSDU issue */
+				prReorderQueParm->u8LastAmsduSubIdx =
+					RX_PAYLOAD_FORMAT_MSDU;
 #endif
+			}
 		}
 #endif
 
@@ -4806,6 +4800,11 @@ void qmHandleEventCheckReorderBubble(IN struct ADAPTER *prAdapter,
 	prReorderQue = &(prReorderQueParm->rReOrderQue);
 
 	RX_DIRECT_REORDER_LOCK(prAdapter, 0);
+
+#if QM_RX_WIN_SSN_AUTO_ADVANCING
+	if (prReorderQueParm->fgIsWaitingForPktWithSsn == TRUE)
+		prReorderQueParm->fgIsWaitingForPktWithSsn = FALSE;
+#endif
 
 	if (QUEUE_IS_EMPTY(prReorderQue)) {
 		prReorderQueParm->fgHasBubble = FALSE;
@@ -5943,6 +5942,8 @@ void mqmProcessScanResult(IN struct ADAPTER *prAdapter,
 	uint16_t u2Offset;
 	uint8_t aucWfaOui[] = VENDOR_OUI_WFA;
 	u_int8_t fgIsHtVht;
+	bool isWmmType = false;
+	bool isOuiMath = false;
 
 	DEBUGFUNC("mqmProcessScanResult");
 
@@ -5960,57 +5961,65 @@ void mqmProcessScanResult(IN struct ADAPTER *prAdapter,
 		return;
 
 	u2IELength = prScanResult->u2IELength;
-	pucIE = prScanResult->aucIEBuf;
-
+	pucIE = prScanResult->pucIeBuf;
 	/* <1> Determine whether the peer supports WMM/QoS and UAPSDU */
-	IE_FOR_EACH(pucIE, u2IELength, u2Offset) {
-		switch (IE_ID(pucIE)) {
+	if (pucIE != NULL) {
+		IE_FOR_EACH(pucIE, u2IELength, u2Offset) {
+			switch (IE_ID(pucIE)) {
 
-		case ELEM_ID_EXTENDED_CAP:
+			case ELEM_ID_EXTENDED_CAP:
 #if CFG_SUPPORT_TDLS
-			TdlsBssExtCapParse(prStaRec, pucIE);
+				TdlsBssExtCapParse(prStaRec, pucIE);
 #endif /* CFG_SUPPORT_TDLS */
 #if CFG_SUPPORT_802_11V_BSS_TRANSITION_MGT
-			prStaRec->fgSupportBTM =
-				!!((*(uint32_t *)(pucIE + 2)) &
-			BIT(ELEM_EXT_CAP_BSS_TRANSITION_BIT));
+				prStaRec->fgSupportBTM =
+					!!((*(uint32_t *)(pucIE + 2)) &
+				BIT(ELEM_EXT_CAP_BSS_TRANSITION_BIT));
 #endif
-			break;
+				break;
 
-		case ELEM_ID_WMM:
-			if ((WMM_IE_OUI_TYPE(pucIE) == VENDOR_OUI_TYPE_WMM) &&
-			    (!kalMemCmp(WMM_IE_OUI(pucIE), aucWfaOui, 3))) {
-				struct IE_WMM_PARAM *prWmmParam =
+			case ELEM_ID_WMM:
+				isWmmType =
+					(WMM_IE_OUI_TYPE(pucIE) ==
+					VENDOR_OUI_TYPE_WMM);
+				isOuiMath =
+					!(kalMemCmp(WMM_IE_OUI(pucIE),
+					aucWfaOui, 3));
+				if (isWmmType && isOuiMath) {
+					struct IE_WMM_PARAM *prWmmParam =
 					(struct IE_WMM_PARAM *)pucIE;
-				enum ENUM_ACI eAci;
+					enum ENUM_ACI eAci;
 
 				switch (WMM_IE_OUI_SUBTYPE(pucIE)) {
 				case VENDOR_OUI_SUBTYPE_WMM_PARAM:
-					/* WMM Param IE with a wrong length */
+				/* WMM Param IE with a wrong length */
 					if (IE_LEN(pucIE) != 24)
 						break;
 					prStaRec->fgIsWmmSupported = TRUE;
 					prStaRec->fgIsUapsdSupported =
 						!!(prWmmParam->ucQosInfo &
-						   WMM_QOS_INFO_UAPSD);
+						WMM_QOS_INFO_UAPSD);
 					for (eAci = ACI_BE; eAci < ACI_NUM;
-					     eAci++)
+						eAci++)
 						prStaRec->afgAcmRequired
 							[eAci] = !!(
 							prWmmParam
 								->arAcParam
-									[eAci]
+								[eAci]
 								.ucAciAifsn &
 							WMM_ACIAIFSN_ACM);
 					DBGLOG(WMM, INFO,
-					       "WMM: " MACSTR
-					       "ACM BK=%d BE=%d VI=%d VO=%d\n",
-					       MAC2STR(prStaRec->aucMacAddr),
-					       prStaRec->afgAcmRequired[ACI_BK],
-					       prStaRec->afgAcmRequired[ACI_BE],
-					       prStaRec->afgAcmRequired[ACI_VI],
-					       prStaRec->afgAcmRequired
-						       [ACI_VO]);
+						"WMM: " MACSTR
+						"ACM BK=%d BE=%d VI=%d VO=%d\n",
+						MAC2STR(prStaRec->aucMacAddr),
+						prStaRec->afgAcmRequired
+							[ACI_BK],
+						prStaRec->afgAcmRequired
+							[ACI_BE],
+						prStaRec->afgAcmRequired
+							[ACI_VI],
+						prStaRec->afgAcmRequired
+							[ACI_VO]);
 					break;
 
 				case VENDOR_OUI_SUBTYPE_WMM_INFO:
@@ -6032,12 +6041,13 @@ void mqmProcessScanResult(IN struct ADAPTER *prAdapter,
 					 */
 					break;
 				}
-			}
-			break;
+				}
+				break;
 
-		default:
-			/* A WMM IE that doesn't matter. Ignore it. */
-			break;
+			default:
+				/* A WMM IE that doesn't matter. Ignore it. */
+				break;
+			}
 		}
 	}
 
@@ -7516,7 +7526,8 @@ mqmRxModifyBaEntryStatus(IN struct ADAPTER *prAdapter,
 			cnmTimerInitTimer(prAdapter,
 				&prAdapter->rMqmIdleRxBaDetectionTimer,
 				(PFN_MGMT_TIMEOUT_FUNC) mqmTimeoutCheckIdleRxBa,
-				(unsigned long) NULL);
+				(unsigned long) NULL,
+				TIMER_WAKELOCK_AUTO);
 			/* No parameter */
 
 			cnmTimerStopTimer(prAdapter,
@@ -8563,3 +8574,50 @@ void qmHandleDelTspec(struct ADAPTER *prAdapter, struct STA_RECORD *prStaRec,
 	nicTxAdjustTcq(prAdapter);
 	kalSetEvent(prAdapter->prGlueInfo);
 }
+
+void qmCheckRxEAPOLM3(struct ADAPTER *prAdapter,
+			struct SW_RFB *prSwRfb, uint8_t ucBssIndex)
+{
+	uint8_t *pPkt = NULL;
+	uint16_t u2EtherType;
+
+	if (prSwRfb->u2PacketLen <= ETHER_HEADER_LEN)
+		return;
+
+	pPkt = prSwRfb->pvHeader;
+	if (!pPkt)
+		return;
+
+	if (!prSwRfb->pvPacket)
+		return;
+
+	/* get ethernet protocol */
+	u2EtherType = (pPkt[ETH_TYPE_LEN_OFFSET] << 8)
+			| (pPkt[ETH_TYPE_LEN_OFFSET + 1]);
+
+	prAdapter->fgIsPostponeTxEAPOLM3 = FALSE;
+
+	if (u2EtherType == ETH_P_1X) {
+		uint8_t *pucEthBody = &pPkt[ETH_HLEN];
+		uint8_t *pucEapol = pucEthBody;
+		uint8_t ucEapolType = pucEapol[1];
+		uint16_t u2KeyInfo = 0;
+		uint8_t m;
+
+		if (ucEapolType == ETH_EAPOL_KEY) {
+			WLAN_GET_FIELD_BE16(&pucEapol[5], &u2KeyInfo);
+			m = ((u2KeyInfo & 0x1100) == 0x0000 ||
+				(u2KeyInfo & 0x0008) == 0x0000) ? 1 : 3;
+
+			if (prAdapter->rWifiVar.u4SwTestMode ==
+					ENUM_SW_TEST_MODE_SIGMA_HS20_R2 &&
+					m == 3 &&
+					!prSwRfb->prStaRec->fgIsTxKeyReady) {
+				prAdapter->fgIsPostponeTxEAPOLM3 = TRUE;
+				DBGLOG(QM, INFO,
+					"[Passpoint] Postpone sending EAPOL M4 until PTK installed!");
+			}
+		}
+	}
+}
+

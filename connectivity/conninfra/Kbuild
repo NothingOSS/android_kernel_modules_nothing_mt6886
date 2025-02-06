@@ -383,7 +383,10 @@ endif
 ###############################################################################
 # Test
 ###############################################################################
-ifneq ($(TARGET_BUILD_VARIANT), user)
+# Enable conninfra_test and connv3_test node
+# BUILD_TEST_MODE := yes
+
+ifeq ($(BUILD_TEST_MODE), yes)
 ccflags-y += -D CFG_CONNINFRA_UT_SUPPORT
 
 # connv2

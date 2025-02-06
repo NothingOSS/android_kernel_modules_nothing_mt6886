@@ -444,8 +444,10 @@ struct pcie_msi_layout mt6639_pcie_msi_layout[] = {
 	{"reserved", NULL, NULL, NONE_INT, 0},
 	{"drv_own_host_timeout_irq", pcie_drv_own_top_handler,
 		pcie_drv_own_thread_handler, AP_DRV_OWN, 0},
+#if CFG_MTK_MDDP_SUPPORT
 	{"drv_own_md_timeout_irq", mtk_md_dummy_pci_interrupt,
 				 NULL, MDDP_INT, 0},
+#endif
 	{"fw_log_irq", pcie_fw_log_top_handler,
 		pcie_fw_log_thread_handler, AP_MISC_INT, 0},
 	{"reserved", NULL, NULL, NONE_INT, 0},
@@ -723,6 +725,7 @@ struct CHIP_DBG_OPS mt6639_DebugOps = {
 #if IS_ENABLED(CFG_MTK_WIFI_CONNV3_SUPPORT)
 	.dumpPcieCr = mt6639_dumpPcieReg,
 	.checkDumpViaBt = mt6639_CheckDumpViaBt,
+	.checkIsMcuOff = mt6639_CheckIsMcuOff,
 #endif
 #endif
 #if CFG_SUPPORT_LINK_QUALITY_MONITOR
@@ -2143,8 +2146,11 @@ static u_int8_t mt6639DumpPcieDateFlowStatus(struct GLUE_INFO *prGlueInfo)
 	dump = mtk_pcie_dump_link_info(0) & BIT(5);
 #endif
 
+	if (!prGlueInfo)
+		return FALSE;
 	if (!dump)
 		return FALSE;
+
 
 	/*read pcie cfg.space 0x488 // level1: pcie*/
 	prHifInfo = &prGlueInfo->rHifInfo;
@@ -2287,7 +2293,9 @@ static u_int8_t mt6639DumpPcieDateFlowStatus(struct GLUE_INFO *prGlueInfo)
 		return FALSE;
 	}
 
-	if ((u4RegVal[6] & BITS(12, 13)) == BITS(12, 13)) {
+	if ((prGlueInfo->prAdapter != NULL) &&
+		(prGlueInfo->prAdapter->fgRstByDrvOwn) &&
+		(u4RegVal[6] & BITS(12, 13)) == BITS(12, 13)) {
 		DBGLOG(HAL, INFO, "MCU off, 0x1F5014=0x%08x\n", u4RegVal[6]);
 		/* block pcie to prevent access */
 		mtk_pcie_disable_data_trans(0);

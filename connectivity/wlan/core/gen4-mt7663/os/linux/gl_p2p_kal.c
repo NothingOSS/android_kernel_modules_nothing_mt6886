@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: @(#) gl_p2p_cfg80211.c@@
  */
@@ -1544,6 +1498,7 @@ kalP2PGOStationUpdate(IN struct GLUE_INFO *prGlueInfo,
 		IN u_int8_t fgIsNew)
 {
 	struct GL_P2P_INFO *prP2pGlueInfo = (struct GL_P2P_INFO *) NULL;
+	struct BSS_INFO *prBssInfo = NULL;
 
 	do {
 		if ((prGlueInfo == NULL) || (prCliStaRec == NULL)
@@ -1560,6 +1515,10 @@ kalP2PGOStationUpdate(IN struct GLUE_INFO *prGlueInfo,
 
 		if (fgIsNew) {
 			struct station_info rStationInfo;
+
+			if (prCliStaRec->fgIsConnected == TRUE)
+				break;
+			prCliStaRec->fgIsConnected = TRUE;
 
 			kalMemZero(&rStationInfo, sizeof(rStationInfo));
 
@@ -1583,6 +1542,25 @@ kalP2PGOStationUpdate(IN struct GLUE_INFO *prGlueInfo,
 			 *    check GLUE_FLAG_HALT is the temporarily solution.
 			 */
 			if ((prGlueInfo->ulFlag & GLUE_FLAG_HALT) == 0) {
+				prBssInfo = GET_BSS_INFO_BY_INDEX(
+					prGlueInfo->prAdapter,
+					prCliStaRec->ucBssIndex);
+
+				/* sae hostapd new_sta, when auth fail,
+				 * driver need del_sta
+				 */
+				if (prCliStaRec->fgIsConnected == FALSE
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+				    && prBssInfo->u4RsnSelectedAKMSuite !=
+							RSN_AKM_SUITE_SAE
+#endif
+#if (CFG_SUPPORT_SOFTAP_OWE == 1)
+				    && prBssInfo->u4RsnSelectedAKMSuite !=
+							RSN_AKM_SUITE_OWE
+#endif
+				   )
+					break;
+				prCliStaRec->fgIsConnected = FALSE;
 				cfg80211_del_sta(prP2pGlueInfo->aprRoleHandler,
 					/* struct net_device * dev, */
 					prCliStaRec->aucMacAddr, GFP_KERNEL);
@@ -1658,6 +1636,372 @@ void kalP2PCacFinishedUpdate(IN struct GLUE_INFO *prGlueInfo,
 
 
 }				/* kalP2PRddDetectUpdate */
+
+#if (CFG_SUPPORT_DFS_OFFLOAD == 1)
+void kalP2PCacStartUpdate(IN struct GLUE_INFO *prGlueInfo,
+		IN uint8_t ucRoleIndex)
+{
+	DBGLOG(INIT, INFO, "CAC Start event\n");
+
+	if (prGlueInfo == NULL)
+		return;
+
+	if (prGlueInfo->prP2PInfo[ucRoleIndex]->chandef == NULL)
+		return;
+
+	DBGLOG(INIT, INFO, "kalP2PCacStartUpdate: Update to OS\n");
+#if KERNEL_VERSION(3, 14, 0) <= CFG80211_VERSION_CODE
+	cfg80211_cac_event(prGlueInfo->prP2PInfo[ucRoleIndex]->prDevHandler,
+			prGlueInfo->prP2PInfo[ucRoleIndex]->chandef,
+			NL80211_RADAR_CAC_STARTED, GFP_KERNEL);
+#else
+	cfg80211_cac_event(prGlueInfo->prP2PInfo[ucRoleIndex]->prDevHandler,
+			NL80211_RADAR_CAC_STARTED, GFP_KERNEL);
+#endif
+	DBGLOG(INIT, INFO, "kalP2PCacStartUpdate: Update to OS Done\n");
+
+} /*kalP2PCacStartUpdate*/
+#endif
+
+u_int32_t kalP2pFuncPreStartRdd(
+	struct GLUE_INFO *prGlueInfo,
+	uint8_t ucRoleIdx,
+	struct cfg80211_chan_def *chandef,
+	unsigned int cac_time_ms)
+{
+
+	int32_t i4Rslt = -EINVAL;
+	uint8_t fgWidthInvalid = FALSE;
+	struct MSG_P2P_DFS_CAC *prP2pDfsCacMsg =
+		(struct MSG_P2P_DFS_CAC *) NULL;
+	struct RF_CHANNEL_INFO rRfChnlInfo;
+	struct ieee80211_channel *origin_chan = NULL;
+
+	if ((prGlueInfo == NULL) || (chandef == NULL))
+		goto out;
+
+	if (prGlueInfo->prP2PInfo[ucRoleIdx]->chandef == NULL) {
+		prGlueInfo->prP2PInfo[ucRoleIdx]->chandef =
+			(struct cfg80211_chan_def *)
+				cnmMemAlloc(prGlueInfo->prAdapter,
+				RAM_TYPE_BUF,
+				sizeof(struct cfg80211_chan_def));
+		if (prGlueInfo->prP2PInfo[ucRoleIdx]->chandef == NULL) {
+			i4Rslt = -ENOMEM;
+			goto out;
+		}
+		kalMemZero(prGlueInfo->prP2PInfo[ucRoleIdx]->chandef,
+				sizeof(struct cfg80211_chan_def));
+
+		prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->chan =
+			(struct ieee80211_channel *)
+				cnmMemAlloc(prGlueInfo->prAdapter,
+					RAM_TYPE_BUF,
+					sizeof(struct ieee80211_channel));
+		if (prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->chan
+			== NULL) {
+			i4Rslt = -ENOMEM;
+			goto out;
+		}
+		kalMemZero(prGlueInfo->prP2PInfo[ucRoleIdx]
+			->chandef->chan,
+			sizeof(struct ieee80211_channel));
+	}
+
+	/*reset cfg80211_chan_def&ieee80211_channel*/
+	memset(prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->chan,
+		0, sizeof(struct ieee80211_channel));
+	origin_chan = prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->chan;
+	memset(prGlueInfo->prP2PInfo[ucRoleIdx]->chandef,
+		0, sizeof(struct cfg80211_chan_def));
+	prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->chan = origin_chan;
+
+	/* Copy chan def to local buffer*/
+	prGlueInfo->prP2PInfo[ucRoleIdx]
+		->chandef->center_freq1 = chandef->center_freq1;
+	prGlueInfo->prP2PInfo[ucRoleIdx]
+		->chandef->center_freq2 = chandef->center_freq2;
+	prGlueInfo->prP2PInfo[ucRoleIdx]
+		->chandef->width = chandef->width;
+	memcpy(prGlueInfo->prP2PInfo[ucRoleIdx]->chandef->chan,
+		chandef->chan, sizeof(struct ieee80211_channel));
+	prGlueInfo->prP2PInfo[ucRoleIdx]->cac_time_ms = cac_time_ms;
+
+	if (chandef) {
+		mtk_p2p_cfg80211func_channel_format_switch(chandef,
+			chandef->chan, &rRfChnlInfo);
+
+		p2pFuncSetChannel(prGlueInfo->prAdapter,
+				ucRoleIdx, &rRfChnlInfo);
+	}
+
+	DBGLOG(P2P, INFO, "(role %d)\n", ucRoleIdx);
+
+	p2pFuncSetDfsState(DFS_STATE_INACTIVE);
+
+	prP2pDfsCacMsg = (struct MSG_P2P_DFS_CAC *)
+		cnmMemAlloc(prGlueInfo->prAdapter,
+			RAM_TYPE_MSG, sizeof(*prP2pDfsCacMsg));
+
+	if (prP2pDfsCacMsg == NULL) {
+		DBGLOG(P2P, ERROR, "Mem prP2pDfsCacMsg alloc failed\n");
+		i4Rslt = -ENOMEM;
+		goto out;
+	}
+
+	prP2pDfsCacMsg->rMsgHdr.eMsgId = MID_MNY_P2P_DFS_CAC;
+
+	switch (chandef->width) {
+	case NL80211_CHAN_WIDTH_20_NOHT:
+	case NL80211_CHAN_WIDTH_20:
+	case NL80211_CHAN_WIDTH_40:
+		prP2pDfsCacMsg->eChannelWidth = CW_20_40MHZ;
+		break;
+
+	case NL80211_CHAN_WIDTH_80:
+		prP2pDfsCacMsg->eChannelWidth = CW_80MHZ;
+		break;
+
+	case NL80211_CHAN_WIDTH_80P80:
+		prP2pDfsCacMsg->eChannelWidth = CW_80P80MHZ;
+		break;
+
+	default:
+		DBGLOG(P2P, ERROR,
+			"!!!Bandwidth do not support!!!\n");
+		fgWidthInvalid = TRUE;
+		break;
+	}
+
+
+	if (fgWidthInvalid) {
+		cnmMemFree(prGlueInfo->prAdapter, prP2pDfsCacMsg);
+		goto out;
+	}
+
+	prP2pDfsCacMsg->ucRoleIdx = ucRoleIdx;
+
+	mboxSendMsg(prGlueInfo->prAdapter,
+		MBOX_ID_0,
+		(struct MSG_HDR *) prP2pDfsCacMsg,
+		MSG_SEND_METHOD_BUF);
+
+	i4Rslt = 0;
+
+out:
+	return i4Rslt;
+}
+#endif
+
+void kalP2pIndicateChnlSwitch(IN struct ADAPTER *prAdapter,
+		IN struct BSS_INFO *prBssInfo)
+{
+	struct GL_P2P_INFO *prP2PInfo;
+	struct net_device *prNetdevice = (struct net_device *) NULL;
+	struct ieee80211_channel *chan;
+	uint8_t role_idx = 0;
+	struct ieee80211_channel *origin_chan = NULL;
+
+	if (!prAdapter || !prBssInfo)
+		return;
+
+	role_idx = prBssInfo->u4PrivateData;
+	prP2PInfo = prAdapter->prGlueInfo->prP2PInfo[role_idx];
+
+	if (!prP2PInfo) {
+		DBGLOG(P2P, WARN, "p2p glue info is not active\n");
+		return;
+	}
+
+	/* Compose ch info. */
+	if (prP2PInfo->chandef == NULL) {
+		prP2PInfo->chandef = (struct cfg80211_chan_def *)
+				cnmMemAlloc(prAdapter, RAM_TYPE_BUF,
+				sizeof(struct cfg80211_chan_def));
+		if (!prP2PInfo->chandef) {
+			DBGLOG(P2P, WARN, "cfg80211_chan_def alloc fail\n");
+			return;
+		}
+
+		kalMemZero(prP2PInfo->chandef,
+				sizeof(struct cfg80211_chan_def));
+
+		prP2PInfo->chandef->chan = (struct ieee80211_channel *)
+				cnmMemAlloc(prAdapter, RAM_TYPE_BUF,
+				sizeof(struct ieee80211_channel));
+
+		if (!prP2PInfo->chandef->chan) {
+			DBGLOG(P2P, WARN, "ieee80211_channel alloc fail\n");
+			return;
+		}
+
+		kalMemZero(prP2PInfo->chandef->chan,
+				sizeof(struct ieee80211_channel));
+	}
+
+	/*reset cfg80211_chan_def&ieee80211_channel*/
+	memset(prP2PInfo->chandef->chan,
+		0, sizeof(struct ieee80211_channel));
+	origin_chan = prP2PInfo->chandef->chan;
+	memset(prP2PInfo->chandef, 0, sizeof(struct cfg80211_chan_def));
+	prP2PInfo->chandef->chan = origin_chan;
+
+	chan = ieee80211_get_channel(
+			prP2PInfo->prWdev->wiphy,
+			nicChannelNum2Freq(
+				prBssInfo->ucPrimaryChannel) / 1000);
+	if (!chan) {
+		DBGLOG(P2P, WARN,
+			"get channel fail\n");
+		return;
+	}
+
+	/* Fill chan def */
+	switch (prBssInfo->eBand) {
+	case BAND_2G4:
+		prP2PInfo->chandef->chan->band = KAL_BAND_2GHZ;
+		break;
+	case BAND_5G:
+		prP2PInfo->chandef->chan->band = KAL_BAND_5GHZ;
+		break;
+	default:
+		prP2PInfo->chandef->chan->band = KAL_BAND_2GHZ;
+		break;
+	}
+
+	prP2PInfo->chandef->chan->center_freq = nicChannelNum2Freq(
+			prBssInfo->ucPrimaryChannel) / 1000;
+
+	prP2PInfo->chandef->chan->dfs_state = chan->dfs_state;
+
+	switch (prBssInfo->ucVhtChannelWidth) {
+	case VHT_OP_CHANNEL_WIDTH_80P80:
+		prP2PInfo->chandef->width
+			= NL80211_CHAN_WIDTH_80P80;
+		prP2PInfo->chandef->center_freq1
+			= nicChannelNum2Freq(
+			prBssInfo->ucVhtChannelFrequencyS1) / 1000;
+		prP2PInfo->chandef->center_freq2
+			= nicChannelNum2Freq(
+			prBssInfo->ucVhtChannelFrequencyS2) / 1000;
+		break;
+	case VHT_OP_CHANNEL_WIDTH_160:
+		prP2PInfo->chandef->width
+			= NL80211_CHAN_WIDTH_160;
+		prP2PInfo->chandef->center_freq1
+			= nicChannelNum2Freq(
+			prBssInfo->ucVhtChannelFrequencyS1) / 1000;
+		prP2PInfo->chandef->center_freq2
+			= nicChannelNum2Freq(
+			prBssInfo->ucVhtChannelFrequencyS2) / 1000;
+		break;
+	case VHT_OP_CHANNEL_WIDTH_80:
+		prP2PInfo->chandef->width
+			= NL80211_CHAN_WIDTH_80;
+		prP2PInfo->chandef->center_freq1
+			= nicChannelNum2Freq(
+			prBssInfo->ucVhtChannelFrequencyS1) / 1000;
+		prP2PInfo->chandef->center_freq2
+			= nicChannelNum2Freq(
+			prBssInfo->ucVhtChannelFrequencyS2) / 1000;
+		break;
+	case VHT_OP_CHANNEL_WIDTH_20_40:
+		prP2PInfo->chandef->center_freq1
+			= prP2PInfo->chandef->chan->center_freq;
+		if (prBssInfo->eBssSCO == CHNL_EXT_SCA) {
+			prP2PInfo->chandef->width
+				= NL80211_CHAN_WIDTH_40;
+			prP2PInfo->chandef->center_freq1 += 10;
+		} else if (prBssInfo->eBssSCO == CHNL_EXT_SCB) {
+			prP2PInfo->chandef->width
+				= NL80211_CHAN_WIDTH_40;
+			prP2PInfo->chandef->center_freq1 -= 10;
+		} else {
+			prP2PInfo->chandef->width
+				= NL80211_CHAN_WIDTH_20;
+		}
+		prP2PInfo->chandef->center_freq2 = 0;
+		break;
+	default:
+		prP2PInfo->chandef->width
+			= NL80211_CHAN_WIDTH_20;
+		prP2PInfo->chandef->center_freq1
+			= prP2PInfo->chandef->chan->center_freq;
+		prP2PInfo->chandef->center_freq2 = 0;
+		break;
+	}
+
+	DBGLOG(P2P, INFO,
+		"role(%d) b=%d f=%d w=%d s1=%d s2=%d dfs=%d\n",
+		role_idx,
+		prP2PInfo->chandef->chan->band,
+		prP2PInfo->chandef->chan->center_freq,
+		prP2PInfo->chandef->width,
+		prP2PInfo->chandef->center_freq1,
+		prP2PInfo->chandef->center_freq2,
+		prP2PInfo->chandef->chan->dfs_state);
+
+	/* Ch notify */
+	if ((prP2PInfo->aprRoleHandler != NULL) &&
+		(prP2PInfo->aprRoleHandler != prP2PInfo->prDevHandler))
+		prNetdevice = prP2PInfo->aprRoleHandler;
+	else
+		prNetdevice = prP2PInfo->prDevHandler;
+
+	mutex_lock(&prNetdevice->ieee80211_ptr->mtx);
+	cfg80211_ch_switch_notify(
+		prNetdevice,
+		prP2PInfo->chandef
+#if (CFG_ADVANCED_80211_MLO == 1) || \
+	KERNEL_VERSION(6, 0, 0) <= CFG80211_VERSION_CODE
+		, 0
+#if (CFG_KERNEL_AN13_515 == 1 && \
+	KERNEL_VERSION(5, 15, 94) <= LINUX_VERSION_CODE) || \
+	KERNEL_VERSION(6, 1, 25) <= CFG80211_VERSION_CODE
+		, 0
+#endif
+#endif
+		);
+	mutex_unlock(&prNetdevice->ieee80211_ptr->mtx);
+}
+
+#if (CFG_SUPPORT_CFG80211_QUEUE == 1)
+void cfg80211EventToQueue(IN struct ADAPTER *prAdapter,
+		IN uint8_t ucBssIndex, IN uint8_t ucflagTx)
+{
+
+	struct PARAM_CFG80211_REQ *prCfg80211Req = NULL;
+
+	GLUE_SPIN_LOCK_DECLARATION();
+
+	if (!prAdapter) {
+		DBGLOG(SCN, INFO, "prAdapter or prBssInfo is NULL\n");
+		return;
+	}
+
+	DBGLOG(REQ, INFO, "switch cfg80211 workq from main_thread\n");
+
+	prCfg80211Req = (struct PARAM_CFG80211_REQ *) kalMemAlloc(
+			sizeof(struct PARAM_CFG80211_REQ), PHY_MEM_TYPE);
+	DBGLOG(REQ, TRACE, "Alloc prCfg80211Req %p\n", prCfg80211Req);
+
+	if (prCfg80211Req == NULL) {
+		DBGLOG(REQ, ERROR, "prCfg80211Req Alloc Failed\n");
+		return;
+	}
+	memset(prCfg80211Req, 0,  sizeof(struct PARAM_CFG80211_REQ));
+	/* just use cfg80211 queue to set reg */
+	prCfg80211Req->ucFlagTx = CFG80211_EVENT;
+	prCfg80211Req->ucBssIndex = ucBssIndex;
+
+	GLUE_ACQUIRE_SPIN_LOCK(prAdapter->prGlueInfo, SPIN_LOCK_CFG80211_QUE);
+	QUEUE_INSERT_TAIL(&prAdapter->rCfg80211Queue,
+				&prCfg80211Req->rQueEntry);
+	GLUE_RELEASE_SPIN_LOCK(prAdapter->prGlueInfo, SPIN_LOCK_CFG80211_QUE);
+
+	if (!schedule_delayed_work(&cfg80211_workq, 0))
+		DBGLOG(REQ, INFO, "work is already in cfg80211_workq\n");
+}
 #endif
 
 u_int8_t kalP2pFuncGetChannelType(IN enum ENUM_CHNL_EXT rChnlSco,
@@ -1918,8 +2262,7 @@ void kalP2PSetMaxClients(IN struct GLUE_INFO *prGlueInfo,
 		return;
 
 	if (u4MaxClient == 0 ||
-		prGlueInfo->prP2PInfo[ucRoleIndex]->ucMaxClients
-		>= P2P_MAXIMUM_CLIENT_COUNT)
+		u4MaxClient >= P2P_MAXIMUM_CLIENT_COUNT)
 		prGlueInfo->prP2PInfo[ucRoleIndex]->ucMaxClients =
 			P2P_MAXIMUM_CLIENT_COUNT;
 	else
@@ -1944,7 +2287,7 @@ u_int8_t kalP2PMaxClients(IN struct GLUE_INFO *prGlueInfo,
 	if (prGlueInfo->prP2PInfo[ucRoleIndex] &&
 		prGlueInfo->prP2PInfo[ucRoleIndex]->ucMaxClients) {
 		if ((uint8_t) u4NumClient
-			> prGlueInfo->prP2PInfo[ucRoleIndex]->ucMaxClients)
+			>= prGlueInfo->prP2PInfo[ucRoleIndex]->ucMaxClients)
 			return TRUE;
 		else
 			return FALSE;

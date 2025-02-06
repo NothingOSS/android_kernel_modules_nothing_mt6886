@@ -853,9 +853,9 @@ static bool kbase_jsctx_slot_atom_pulled_dec(struct kbase_context *kctx,
 	 * higher priority levels are still blocked: a subsequent query to
 	 * kbase_jsctx_slot_prio_is_blocked() will still return true
 	 */
-	if (!atoms_pulled_pri &&
-	    kbase_jsctx_slot_prio_is_blocked(kctx, js, sched_prio)) {
-		kbase_jsctx_slot_prio_blocked_clear(kctx, js, sched_prio);
+	if (!atoms_pulled_pri) {
+		if(kbase_jsctx_slot_prio_is_blocked(kctx, js, sched_prio))
+			kbase_jsctx_slot_prio_blocked_clear(kctx, js, sched_prio);
 
 		if (!kbase_jsctx_slot_prio_is_blocked(kctx, js, sched_prio))
 			slot_prio_became_unblocked = true;

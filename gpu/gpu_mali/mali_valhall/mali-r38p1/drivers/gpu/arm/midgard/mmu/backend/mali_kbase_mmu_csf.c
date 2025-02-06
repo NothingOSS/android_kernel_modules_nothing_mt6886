@@ -358,7 +358,9 @@ void kbase_mmu_report_fault_and_kill(struct kbase_context *kctx,
  * @as:		The address space that has the fault
  * @fault:	Data relating to the fault
  *
- * This function will process a fault on a specific address space
+ * This function will process a fault on a specific address space.
+ * The function must be called with the ref_count of the kctx already increased/acquired.
+ * If it fails to queue the work, the ref_count will be decreased.
  */
 static void kbase_mmu_interrupt_process(struct kbase_device *kbdev,
 		struct kbase_context *kctx, struct kbase_as *as,
@@ -393,11 +395,18 @@ static void kbase_mmu_interrupt_process(struct kbase_device *kbdev,
 		 * We need to switch to UNMAPPED mode - but we do this in a
 		 * worker so that we can sleep
 		 */
-		WARN_ON(!queue_work(as->pf_wq, &as->work_busfault));
-		atomic_inc(&kbdev->faults_pending);
+		if (!queue_work(as->pf_wq, &as->work_busfault)) {
+			dev_warn(kbdev->dev, "Bus fault is already pending for as %u", as->number);
+			kbase_ctx_sched_release_ctx(kctx);
+		} else {
+			atomic_inc(&kbdev->faults_pending);
+		}
 	} else {
-		WARN_ON(!queue_work(as->pf_wq, &as->work_pagefault));
-		atomic_inc(&kbdev->faults_pending);
+		if (!queue_work(as->pf_wq, &as->work_pagefault)) {
+			dev_warn(kbdev->dev, "Page fault is already pending for as %u", as->number);
+			kbase_ctx_sched_release_ctx(kctx);
+		} else
+			atomic_inc(&kbdev->faults_pending);
 	}
 }
 

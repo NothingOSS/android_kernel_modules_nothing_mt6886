@@ -1336,20 +1336,32 @@ void secPrivacyDumpWTBL(struct ADAPTER *prAdapter)
 {
 	struct WLAN_TABLE *prWtbl;
 	uint8_t i;
+	uint8_t *prLogBuf;
+	int32_t i4Written = 0;
 
 	prWtbl = prAdapter->rWifiVar.arWtbl;
+	prLogBuf = (uint8_t *)
+			kalMemAlloc(DUMP_WTBL_BUF_SIZE, VIR_MEM_TYPE);
+	if (!prLogBuf)
+		return;
+	kalMemZero(prLogBuf, DUMP_WTBL_BUF_SIZE);
+	i4Written += kalSnprintf(prLogBuf + i4Written,
+		DUMP_WTBL_BUF_SIZE - i4Written,
+		"(bssIdx,keyid,pairwise,staIdx,Addr) ");
 
-	DBGLOG(RSN, INFO, "The Wlan index\n");
 
 	for (i = 0; i < WTBL_SIZE; i++) {
-		if (prWtbl[i].ucUsed)
-			DBGLOG(RSN, INFO,
-			       "#%d Used=%d  BSSIdx=%d keyid=%d P=%d STA=%d Addr="
-			       MACSTR "\n", i, prWtbl[i].ucUsed,
-			       prWtbl[i].ucBssIndex, prWtbl[i].ucKeyId,
-			       prWtbl[i].ucPairwise, prWtbl[i].ucStaIndex,
-			       MAC2STR(prWtbl[i].aucMacAddr));
+		if (prWtbl[i].ucUsed) {
+			i4Written += kalSnprintf(prLogBuf + i4Written,
+				DUMP_WTBL_BUF_SIZE - i4Written,
+				"#%d (%d,%d,%d,%d, " MACSTR ") ",
+				i, prWtbl[i].ucBssIndex, prWtbl[i].ucKeyId,
+				prWtbl[i].ucPairwise, prWtbl[i].ucStaIndex,
+				MAC2STR(prWtbl[i].aucMacAddr));
+		}
 	}
+	DBGLOG(RSN, INFO, "%s", prLogBuf);
+	kalMemFree(prLogBuf, DUMP_WTBL_BUF_SIZE, VIR_MEM_TYPE);
 }
 
 uint8_t secCheckWTBLwlanIdxInUseByOther(struct ADAPTER *prAdapter,

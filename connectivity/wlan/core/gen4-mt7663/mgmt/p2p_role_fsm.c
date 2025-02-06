@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 #include "precomp.h"
 #include "p2p_role_state.h"
 #include "gl_p2p_os.h"
@@ -124,13 +78,15 @@ uint8_t p2pRoleFsmInit(IN struct ADAPTER *prAdapter,
 		cnmTimerInitTimer(prAdapter,
 			&(prP2pRoleFsmInfo->rP2pRoleFsmTimeoutTimer),
 			(PFN_MGMT_TIMEOUT_FUNC) p2pRoleFsmRunEventTimeout,
-			(unsigned long) prP2pRoleFsmInfo);
+			(unsigned long) prP2pRoleFsmInfo,
+			TIMER_WAKELOCK_AUTO);
 
 #if CFG_ENABLE_PER_STA_STATISTICS_LOG
 		cnmTimerInitTimer(prAdapter,
 			&(prP2pRoleFsmInfo->rP2pRoleFsmGetStatisticsTimer),
 			(PFN_MGMT_TIMEOUT_FUNC) p2pRoleFsmGetStaStatistics,
-			(unsigned long) prP2pRoleFsmInfo);
+			(unsigned long) prP2pRoleFsmInfo,
+			TIMER_WAKELOCK_AUTO);
 #endif
 
 #if (CFG_SUPPORT_DFS_MASTER == 1)
@@ -138,7 +94,8 @@ uint8_t p2pRoleFsmInit(IN struct ADAPTER *prAdapter,
 			&(prP2pRoleFsmInfo->rDfsShutDownTimer),
 			(PFN_MGMT_TIMEOUT_FUNC)
 			p2pRoleFsmRunEventDfsShutDownTimeout,
-			(unsigned long) prP2pRoleFsmInfo);
+			(unsigned long) prP2pRoleFsmInfo,
+			TIMER_WAKELOCK_AUTO);
 #endif
 
 		prP2pBssInfo = cnmGetBssInfoAndInit(prAdapter,
@@ -247,6 +204,14 @@ uint8_t p2pRoleFsmInit(IN struct ADAPTER *prAdapter,
 			prP2pRoleFsmInfo,
 			P2P_ROLE_STATE_IDLE);
 
+#if CFG_SUPPORT_P2P_CSA
+		cnmTimerInitTimer(prAdapter,
+			&prP2pRoleFsmInfo->rCsaTimer,
+			(PFN_MGMT_TIMEOUT_FUNC) rlmCsaTimeout,
+			(unsigned long)ucRoleIdx,
+			TIMER_WAKELOCK_AUTO);
+		rlmResetCsaParams(prAdapter, ucRoleIdx);
+#endif
 	} while (FALSE);
 
 	if (prP2pBssInfo)
@@ -329,6 +294,11 @@ void p2pRoleFsmUninit(IN struct ADAPTER *prAdapter, IN uint8_t ucRoleIdx)
 #if (CFG_SUPPORT_DFS_MASTER == 1)
 		cnmTimerStopTimer(prAdapter,
 			&(prP2pRoleFsmInfo->rDfsShutDownTimer));
+#endif
+
+#if CFG_SUPPORT_P2P_CSA
+		cnmTimerStopTimer(prAdapter,
+			&prP2pRoleFsmInfo->rCsaTimer);
 #endif
 
 		if (prP2pRoleFsmInfo)
@@ -577,6 +547,9 @@ void p2pRoleFsmRunEventTimeout(IN struct ADAPTER *prAdapter,
 			cnmTimerStartTimer(prAdapter,
 				&(prP2pRoleFsmInfo->rDfsShutDownTimer),
 				5000);
+#if (CFG_SUPPORT_DFS_OFFLOAD == 1)
+			p2pFuncReadyStartAp(prAdapter, prP2pRoleFsmInfo);
+#endif
 			break;
 #endif
 		default:
@@ -948,7 +921,6 @@ void p2pRoleFsmRunEventRxDisassociation(IN struct ADAPTER *prAdapter,
 					prSwRfb->pvHeader;
 			uint16_t u2IELength = 0;
 #endif
-			ASSERT(prP2pBssInfo->prStaRecOfAP == prStaRec);
 
 			if (prP2pBssInfo->prStaRecOfAP != prStaRec)
 				break;
@@ -1107,12 +1079,19 @@ void p2pRoleFsmRunEventBeaconTimeout(IN struct ADAPTER *prAdapter,
 
 				prP2pBssInfo->prStaRecOfAP = NULL;
 
+#if CFG_SUPPORT_CFG80211_AUTH
+				p2pFuncDisconnect(prAdapter,
+					prP2pBssInfo,
+					prStaRec, TRUE,
+					REASON_CODE_DISASSOC_LEAVING_BSS);
+#else
 				p2pFuncDisconnect(prAdapter,
 					prP2pBssInfo,
 					prStaRec, FALSE,
 					REASON_CODE_DISASSOC_LEAVING_BSS);
 
 				p2pFuncStopComplete(prAdapter, prP2pBssInfo);
+#endif
 
 				SET_NET_PWR_STATE_IDLE(prAdapter,
 					prP2pBssInfo->ucBssIndex);
@@ -1128,6 +1107,76 @@ void p2pRoleFsmRunEventBeaconTimeout(IN struct ADAPTER *prAdapter,
 		}
 	} while (FALSE);
 }				/* p2pFsmRunEventBeaconTimeout */
+
+#if (CFG_SUPPORT_DFS_OFFLOAD == 1)
+/*================== Message Event ==================*/
+void p2pRoleFsmRunEventPreStartAP(struct ADAPTER *prAdapter,
+		struct MSG_HDR *prMsgHdr)
+{
+	struct P2P_ROLE_FSM_INFO *prP2pRoleFsmInfo =
+		(struct P2P_ROLE_FSM_INFO *) NULL;
+	struct MSG_P2P_START_AP *prP2pStartAPMsg =
+		(struct MSG_P2P_START_AP *) NULL;
+	struct P2P_CONNECTION_REQ_INFO *prP2pConnReqInfo =
+		(struct P2P_CONNECTION_REQ_INFO *) NULL;
+	struct GL_P2P_INFO *prGlueP2pInfo =
+		(struct GL_P2P_INFO *) NULL;
+	enum ENUM_BAND eBand;
+	uint8_t ucChannelNum;
+	struct cfg80211_chan_def chandef;
+	struct ieee80211_channel *chan;
+
+	prP2pStartAPMsg = (struct MSG_P2P_START_AP *) prMsgHdr;
+
+	prP2pRoleFsmInfo =
+		P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter,
+			prP2pStartAPMsg->ucRoleIdx);
+
+	prGlueP2pInfo =
+		prAdapter->prGlueInfo->prP2PInfo[prP2pStartAPMsg->ucRoleIdx];
+
+	DBGLOG(P2P, TRACE,
+		"p2pRoleFsmRunEventPreStartAP with Role(%d)\n",
+		prP2pStartAPMsg->ucRoleIdx);
+
+	if (!prP2pRoleFsmInfo || !prGlueP2pInfo) {
+		DBGLOG(P2P, ERROR,
+			"Corresponding P2P Role FSM empty: %d.\n",
+			prP2pStartAPMsg->ucRoleIdx);
+		cnmMemFree(prAdapter, prMsgHdr);
+		return;
+	}
+
+	prP2pConnReqInfo = &(prP2pRoleFsmInfo->rConnReqInfo);
+
+	eBand = prP2pConnReqInfo->rChannelInfo.eBand;
+	ucChannelNum = prP2pConnReqInfo->rChannelInfo.ucChannelNum;
+
+	chan = ieee80211_get_channel(
+		prGlueP2pInfo->prWdev->wiphy,
+		(nicChannelNum2Freq(ucChannelNum)/1000));
+
+	if (chan && !(chan->flags & IEEE80211_CHAN_RADAR)) {
+		DBGLOG(P2P, EVENT, "No RADAR CHAN Start AP\n");
+		p2pRoleFsmRunEventStartAP(prAdapter, prMsgHdr);
+	} else {
+		kalMemZero(
+			&chandef,
+			sizeof(struct cfg80211_chan_def));
+		cfg80211_chandef_create(&chandef,
+			chan, NL80211_CHAN_NO_HT);
+
+		prGlueP2pInfo->pP2pStartAPMsg = prP2pStartAPMsg;
+
+		kalP2pFuncPreStartRdd(
+			prAdapter->prGlueInfo,
+			prP2pStartAPMsg->ucRoleIdx,
+			&chandef,
+			DFS_OFFLOAD_CAC_TIME_MS);
+	}
+
+}
+#endif
 
 /*================== Message Event ==================*/
 void p2pRoleFsmRunEventStartAP(IN struct ADAPTER *prAdapter,
@@ -1249,7 +1298,11 @@ void p2pRoleFsmRunEventStartAP(IN struct ADAPTER *prAdapter,
 	}
 
 #if (CFG_SUPPORT_DFS_MASTER == 1)
-	if (timerPendingTimer(&(prP2pRoleFsmInfo->rDfsShutDownTimer))) {
+	if (timerPendingTimer(&(prP2pRoleFsmInfo->rDfsShutDownTimer))
+#if (CFG_SUPPORT_DFS_OFFLOAD == 1)
+	&& p2pFuncGetDfsState() != DFS_STATE_INACTIVE
+#endif
+	) {
 		DBGLOG(P2P, INFO,
 			"p2pRoleFsmRunEventStartAP: Stop DFS shut down timer.\n");
 		cnmTimerStopTimer(prAdapter,
@@ -1494,7 +1547,8 @@ void p2pRoleFsmRunEventStopAP(IN struct ADAPTER *prAdapter,
 					&(prCurrStaRec->rDeauthTxDoneTimer),
 					(PFN_MGMT_TIMEOUT_FUNC)
 					p2pRoleFsmDeauthTimeout,
-					(unsigned long) prCurrStaRec);
+					(unsigned long) prCurrStaRec,
+					TIMER_WAKELOCK_AUTO);
 
 				cnmTimerStartTimer(prAdapter,
 					&(prCurrStaRec->rDeauthTxDoneTimer),
@@ -1614,7 +1668,10 @@ void p2pRoleFsmRunEventDfsCac(IN struct ADAPTER *prAdapter,
 			prP2pDfsCacMsg->ucRoleIdx,
 			prP2pRoleFsmInfo->rConnReqInfo
 				.rChannelInfo.ucChannelNum);
-
+#if (CFG_SUPPORT_DFS_OFFLOAD == 1)
+		kalP2PCacStartUpdate(prAdapter->prGlueInfo,
+			prP2pDfsCacMsg->ucRoleIdx);
+#endif
 		p2pRoleStatePrepare_To_DFS_CAC_STATE(prAdapter,
 				GET_BSS_INFO_BY_INDEX(prAdapter,
 				prP2pRoleFsmInfo->ucBssIndex),
@@ -1640,7 +1697,9 @@ void p2pRoleFsmRunEventRadarDet(IN struct ADAPTER *prAdapter,
 		(struct P2P_ROLE_FSM_INFO *) NULL;
 	struct BSS_INFO *prP2pBssInfo = (struct BSS_INFO *) NULL;
 	struct MSG_P2P_RADAR_DETECT *prMsgP2pRddDetMsg;
-
+#if (CFG_SUPPORT_DFS_OFFLOAD == 1)
+	uint8_t ucNewChannel = 0;
+#endif
 
 	DBGLOG(P2P, INFO, "p2pRoleFsmRunEventRadarDet\n");
 
@@ -1677,19 +1736,53 @@ void p2pRoleFsmRunEventRadarDet(IN struct ADAPTER *prAdapter,
 		else
 			p2pFuncSetDfsState(DFS_STATE_ACTIVE);
 	} else {
-		if (prP2pRoleFsmInfo->eCurrentState == P2P_ROLE_STATE_DFS_CAC)
+		if (prP2pRoleFsmInfo->eCurrentState == P2P_ROLE_STATE_DFS_CAC) {
 			p2pRoleFsmStateTransition(prAdapter,
 				prP2pRoleFsmInfo,
 				P2P_ROLE_STATE_IDLE);
-
+#if (CFG_SUPPORT_DFS_OFFLOAD == 1)
+			kalP2PCacFinishedUpdate(prAdapter->prGlueInfo,
+				prP2pRoleFsmInfo->ucRoleIndex);
+			SET_NET_PWR_STATE_IDLE(
+				prAdapter,
+				prP2pBssInfo->ucBssIndex);
+#endif
+		}
+#if (CFG_SUPPORT_DFS_OFFLOAD == 0)
 		kalP2PRddDetectUpdate(prAdapter->prGlueInfo,
 			prP2pRoleFsmInfo->ucRoleIndex);
+#endif
 		cnmTimerStartTimer(prAdapter,
 			&(prP2pRoleFsmInfo->rDfsShutDownTimer),
 			5000);
 	}
 
 	p2pFuncShowRadarInfo(prAdapter, prMsgP2pRddDetMsg->ucBssIndex);
+
+#if (CFG_SUPPORT_DFS_OFFLOAD == 1)
+	if (!p2pFuncGetRadarDetectMode()) {
+		ucNewChannel =
+			p2pFuncSelect5GNonDFSChannel(prAdapter,
+				prP2pRoleFsmInfo);
+		if (IS_NET_PWR_STATE_ACTIVE(
+			prAdapter,
+			prP2pBssInfo->ucBssIndex)
+			&& prAdapter->fgIsStartApDone) {
+			p2pFuncSwitchChannel(prAdapter,
+				ucNewChannel, prP2pRoleFsmInfo->ucRoleIndex);
+		} else if (IS_NET_PWR_STATE_ACTIVE(
+			prAdapter,
+			prP2pBssInfo->ucBssIndex) &&
+			!prAdapter->fgIsStartApDone) {
+			p2pFuncUpdateChannel(prAdapter,
+				ucNewChannel, prP2pRoleFsmInfo->ucRoleIndex);
+			p2pFuncReadyStartAp(prAdapter, prP2pRoleFsmInfo);
+		} else {
+			DBGLOG(P2P, EVENT,
+			"Ap isnot Start Done Ignore radar event\n");
+		}
+	}
+#endif
 
 error:
 	cnmMemFree(prAdapter, prMsgHdr);
@@ -1721,11 +1814,8 @@ void p2pRoleFsmRunEventSetNewChannel(IN struct ADAPTER *prAdapter,
 		prP2pRoleFsmInfo->rConnReqInfo.rChannelInfo.eBand;
 	prP2pRoleFsmInfo->rChnlReqInfo.eChannelWidth =
 		prMsgP2pSetNewChannelMsg->eChannelWidth;
-	prP2pBssInfo->ucPrimaryChannel =
-		prP2pRoleFsmInfo->rConnReqInfo.rChannelInfo.ucChannelNum;
-
 	prP2pRoleFsmInfo->rChnlReqInfo.ucCenterFreqS1 =
-		nicGetVhtS1(prP2pBssInfo->ucPrimaryChannel,
+		nicGetVhtS1(prP2pRoleFsmInfo->rChnlReqInfo.ucReqChnlNum,
 		prP2pRoleFsmInfo->rChnlReqInfo.eChannelWidth);
 
 	prP2pRoleFsmInfo->rChnlReqInfo.ucCenterFreqS2 = 0;
@@ -2051,7 +2141,8 @@ void p2pRoleFsmRunEventConnectionAbort(IN struct ADAPTER *prAdapter,
 			cnmTimerInitTimer(prAdapter,
 				&(prStaRec->rDeauthTxDoneTimer),
 				(PFN_MGMT_TIMEOUT_FUNC) p2pRoleFsmDeauthTimeout,
-				(unsigned long) prStaRec);
+				(unsigned long) prStaRec,
+				TIMER_WAKELOCK_AUTO);
 
 			cnmTimerStartTimer(prAdapter,
 				&(prStaRec->rDeauthTxDoneTimer),
@@ -2091,7 +2182,15 @@ void p2pRoleFsmRunEventConnectionAbort(IN struct ADAPTER *prAdapter,
 								prCurrStaRec);
 					break;
 				}
-
+#if CFG_SUPPORT_SOFTAP_OWE
+				if (prP2pBssInfo->u4RsnSelectedAKMSuite ==
+					RSN_AKM_SUITE_OWE) {
+					DBGLOG(P2P, INFO,
+						"[OWE] Ignore deauth in %d\n",
+						prCurrStaRec->eAuthAssocState);
+					break;
+				}
+#endif
 				/* Glue layer indication. */
 				/* kalP2PGOStationUpdate(prAdapter->prGlueInfo,
 				 * prCurrStaRec, FALSE);
@@ -2111,7 +2210,8 @@ void p2pRoleFsmRunEventConnectionAbort(IN struct ADAPTER *prAdapter,
 					&(prCurrStaRec->rDeauthTxDoneTimer),
 					(PFN_MGMT_TIMEOUT_FUNC)
 					p2pRoleFsmDeauthTimeout,
-					(unsigned long) prCurrStaRec);
+					(unsigned long) prCurrStaRec,
+					TIMER_WAKELOCK_AUTO);
 
 				cnmTimerStartTimer(prAdapter,
 					&(prCurrStaRec->rDeauthTxDoneTimer),
@@ -2706,24 +2806,24 @@ p2pRoleFsmRunEventChnlGrant(IN struct ADAPTER *prAdapter,
 
 			p2pRoleFsmStateTransition(prAdapter,
 				prP2pRoleFsmInfo, eNextState);
+
+#if (CFG_SUPPORT_DFS_OFFLOAD  == 1)
+#if (CFG_SUPPORT_CFG80211_QUEUE == 1)
+			cfg80211EventToQueue(prAdapter,
+				prP2pBssInfo->ucBssIndex, CFG80211_EVENT);
+#else
+			kalP2pIndicateChnlSwitch(prAdapter, prP2pBssInfo);
+#endif
+#endif
 			break;
 
 #if (CFG_SUPPORT_DFS_MASTER == 1)
 		case P2P_ROLE_STATE_DFS_CAC:
 			p2pFuncStartRdd(prAdapter, prMsgChGrant->ucBssIndex);
 
-			if (p2pFuncCheckWeatherRadarBand(prChnlReqInfo))
-				u4CacTimeMs =
-					P2P_AP_CAC_WEATHER_CHNL_HOLD_TIME_MS;
-			else
-				u4CacTimeMs =
+			u4CacTimeMs =
 					prP2pRoleFsmInfo->rChnlReqInfo
 						.u4MaxInterval;
-
-			if (p2pFuncIsManualCac())
-				u4CacTimeMs = p2pFuncGetDriverCacTime() * 1000;
-			else
-				p2pFuncSetDriverCacTime(u4CacTimeMs/1000);
 
 			cnmTimerStartTimer(prAdapter,
 				&(prP2pRoleFsmInfo->rP2pRoleFsmTimeoutTimer),
@@ -2738,9 +2838,18 @@ p2pRoleFsmRunEventChnlGrant(IN struct ADAPTER *prAdapter,
 				u4CacTimeMs/1000);
 			break;
 		case P2P_ROLE_STATE_SWITCH_CHANNEL:
-			p2pFuncDfsSwitchCh(prAdapter,
-				prP2pBssInfo,
-				prP2pRoleFsmInfo->rChnlReqInfo);
+#if CFG_SUPPORT_P2P_CSA
+			if (IS_BSS_P2P_GC(prP2pBssInfo)) {
+				p2pFuncGcSwitchCh(prAdapter, prP2pRoleFsmInfo);
+			} else
+
+#endif
+			{
+				/* GO/SAP */
+				p2pFuncDfsSwitchCh(prAdapter,
+					prP2pBssInfo,
+					prP2pRoleFsmInfo->rChnlReqInfo);
+			}
 			p2pRoleFsmStateTransition(prAdapter,
 				prP2pRoleFsmInfo,
 				P2P_ROLE_STATE_IDLE);
@@ -3014,6 +3123,16 @@ p2pRoleFsmRunEventAAASuccess(IN struct ADAPTER *prAdapter,
 		prP2pRoleFsmInfo =
 			P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter,
 				prP2pBssInfo->u4PrivateData);
+
+#if CFG_SUPPORT_SOFTAP_OWE
+		if (prP2pBssInfo &&
+			(prP2pBssInfo->u4RsnSelectedAKMSuite ==
+			RSN_AKM_SUITE_OWE)) {
+			DBGLOG(P2P, INFO,
+				"[OWE] Bypass new_sta\n");
+			break;
+		}
+#endif
 
 		/* Glue layer indication. */
 		kalP2PGOStationUpdate(prAdapter->prGlueInfo,

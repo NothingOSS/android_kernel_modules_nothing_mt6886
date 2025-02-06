@@ -1,54 +1,8 @@
-/*******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- ******************************************************************************/
+/* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/include/config.h#3
  */
@@ -283,7 +237,7 @@
 #define CFG_SUPPORT_MDNS_OFFLOAD_TV 1
 #endif
 
-#define TEST_CODE_FOR_MDNS			0
+#define TEST_CODE_FOR_MDNS	0
 #endif
 
 /* Enable A-MSDU RX Reordering Support */
@@ -471,13 +425,31 @@
 
 #define MAX_BSSID_NUM			4	/* MAX BSSID number */
 
+#ifndef CFG_CHIP_RESET_SUPPORT
+#define CFG_CHIP_RESET_SUPPORT		1
+#endif
 
-#define CFG_CHIP_RESET_SUPPORT          1
+#ifndef CFG_CHIP_RESET_KO_SUPPORT
+#define CFG_CHIP_RESET_KO_SUPPORT	0
+#endif
+
 #if CFG_CHIP_RESET_SUPPORT
 #define CFG_CHIP_RESET_HANG		0
-#define CFG_BUS_PROBE_RETRY_CNT	3
+#define CFG_BUS_PROBE_RETRY_CNT		3
 #else
-#define CFG_BUS_PROBE_RETRY_CNT	0
+#define CFG_BUS_PROBE_RETRY_CNT		0
+#endif
+
+#ifndef CFG_CHIP_RESET_USE_DTS_GPIO_NUM
+#define CFG_CHIP_RESET_USE_DTS_GPIO_NUM 0
+#endif
+
+#ifndef CFG_CHIP_RESET_USE_LINUX_GPIO_API
+#define CFG_CHIP_RESET_USE_LINUX_GPIO_API 0
+#endif
+
+#ifndef CFG_CHIP_RESET_USE_MSTAR_GPIO_API
+#define CFG_CHIP_RESET_USE_MSTAR_GPIO_API 0
 #endif
 
 #define HW_BSSID_NUM			4	/* HW BSSID number by chip */
@@ -586,9 +558,6 @@
 
 /*! Maximum size of Header buffer of each SCAN record */
 #define CFG_RAW_BUFFER_SIZE                      1024
-
-/*! Maximum size of IE buffer of each SCAN record */
-#define CFG_IE_BUFFER_SIZE                      512
 
 /*------------------------------------------------------------------------------
  * Flags and Parameters for Power management
@@ -1017,7 +986,7 @@
  * Flags of SDIO test pattern support
  *------------------------------------------------------------------------------
  */
-#define CFG_SUPPORT_SDIO_READ_WRITE_PATTERN 1
+#define CFG_SUPPORT_SDIO_READ_WRITE_PATTERN 0
 
 /*------------------------------------------------------------------------------
  * Flags of Workaround
@@ -1270,12 +1239,6 @@
 #endif
 
 /*------------------------------------------------------------------------------
- * Enable SDIO 1-bit Data Mode. (Usually debug only)
- *------------------------------------------------------------------------------
- */
-#define CFG_SDIO_1BIT_DATA_MODE			0
-
-/*------------------------------------------------------------------------------
  * Single Sku
  *------------------------------------------------------------------------------
  */
@@ -1284,6 +1247,9 @@
 #define CFG_SUPPORT_SINGLE_SKU_LOCAL_DB 1
 #endif
 
+#ifndef CFG_SUPPORT_REG_BY_USER
+#define CFG_SUPPORT_REG_BY_USER 1
+#endif
 
 /*------------------------------------------------------------------------------
  * Direct Control for RF/PHY/BB/MAC for Manual Configuration via command/api
@@ -1359,6 +1325,18 @@
  *------------------------------------------------------------------------------
  */
 #define CFG_SUPPORT_P2P_PREFERRED_FREQ_LIST  1
+
+/*------------------------------------------------------------------------------
+ * sap Support  wpa3
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_SOFTAP_WPA3
+#define CFG_SUPPORT_SOFTAP_WPA3		0
+#endif
+
+#ifndef CFG_SUPPORT_SOFTAP_OWE
+#define CFG_SUPPORT_SOFTAP_OWE		0
+#endif
 
 /*------------------------------------------------------------------------------
  * Support Single RX chain setting
@@ -1534,6 +1512,14 @@
 #define CFG_AP_80211V_SUPPORT 0
 #endif
 
+/*------------------------------------------------------------------------------
+ * Flags of enable 802.11b Dynamic
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_11B_DYNAMIC
+#define CFG_SUPPORT_11B_DYNAMIC 0
+#endif
+
 #ifndef CFG_SUPPORT_NETIF_STOP
 #define CFG_SUPPORT_NETIF_STOP 0
 #endif
@@ -1566,6 +1552,90 @@
  */
 #ifndef CFG_SUPPORT_OLD_VENDOR_HAL
 #define CFG_SUPPORT_OLD_VENDOR_HAL	0
+#endif
+
+/*------------------------------------------------------------------------------
+ * Flags of supported tsf sync
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_TSF_SYNC
+#define CFG_SUPPORT_TSF_SYNC    0
+#endif
+
+/*------------------------------------------------------------------------------
+ * Flag used for P2P GO to find the best channel list
+ * Value 0: Disable
+ * Value 1: Enable
+ * Note: Must Enable CFG_SUPPORT_P2P_PREFERRED_FREQ_LIST in advance
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_P2PGO_ACS
+#define CFG_SUPPORT_P2PGO_ACS 0
+#endif
+
+/*------------------------------------------------------------------------------
+ * Disable obss scan by deleting obss scan ie in beacon and probe response
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_DISABLE_OBSS_SCAN
+#define CFG_SUPPORT_DISABLE_OBSS_SCAN 0
+#endif
+
+/*
+ * WPA3 Mandatory Cert Case 5.9.1 need this.
+ */
+#define CFG_SUPPORT_DUAL_WTBL_GTK_REKEY_OFFLOAD 1
+
+/*------------------------------------------------------------------------------
+ * Flag used for P2P GO and GC support channel switch
+ * Value 0: Disable
+ * Value 1: Enable
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_P2P_CSA
+#define CFG_SUPPORT_P2P_CSA 0
+#endif
+
+/*------------------------------------------------------------------------------
+ * Flags of AUTO SCC mode Support
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_AUTO_SCC
+#define CFG_SUPPORT_AUTO_SCC 0
+#endif
+
+/*------------------------------------------------------------------------------
+ * Flag used for packet offload support.
+ * Value 0: Do not enable packet offload.
+ * Value 1: Enable packet offload.
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_PKT_OFLD
+#define CFG_SUPPORT_PKT_OFLD 1
+#endif
+
+/*------------------------------------------------------------------------------
+ * Flag used for APF support.
+ * Value 0: Do not enable APF.
+ * Value 1: Enable APF.
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_APF
+#define CFG_SUPPORT_APF 1
+#endif
+
+#ifndef CFG_SUPPORT_DFS_OFFLOAD
+#define CFG_SUPPORT_DFS_OFFLOAD 0
+#endif
+
+/*------------------------------------------------------------------------------
+ * Flag used for scan event support.
+ * Value 0: Do not enable  scan event to upper.
+ * Value 1: Enable  scan event to upper.
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_MTK_SCAN_EVENT
+#define CFG_SUPPORT_MTK_SCAN_EVENT 0
 #endif
 
 /*******************************************************************************

@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: //Department/DaVinci/TRUNK/WiFi_P2P_Driver/mgmt/p2p_fsm.c#61
  */
@@ -155,6 +109,9 @@ void p2pFsmRunEventChGrant(IN struct ADAPTER *prAdapter,
 {
 	struct MSG_CH_GRANT *prMsgChGrant = (struct MSG_CH_GRANT *) NULL;
 	struct BSS_INFO *prP2pBssInfo = (struct BSS_INFO *) NULL;
+#if (CFG_SUPPORT_AUTO_SCC == 1)
+	struct AIS_FSM_INFO *prAisFsmInfo;
+#endif
 
 	do {
 		ASSERT_BREAK((prAdapter != NULL) && (prMsgHdr != NULL));
@@ -195,6 +152,23 @@ void p2pFsmRunEventChGrant(IN struct ADAPTER *prAdapter,
 			p2pRoleFsmRunEventChnlGrant(prAdapter, prMsgHdr,
 				P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter,
 					prP2pBssInfo->u4PrivateData));
+#if (CFG_SUPPORT_AUTO_SCC == 1)
+			/* Keep Going when switch to new channel  */
+			prAisFsmInfo = &(prAdapter->rWifiVar.rAisFsmInfo);
+			if (!prAisFsmInfo)
+				break;
+			if (prAisFsmInfo->eCurrentState ==
+					AIS_STATE_GO_SYNC_CHANNEL ||
+				prAisFsmInfo->ePreviousState ==
+					AIS_STATE_GO_SYNC_CHANNEL) {
+				/* Update AIS Steps*/
+				aisFsmSteps(prAdapter,
+					AIS_STATE_GO_SYNC_CH_DONE);
+				/* Stop the Go sync channel timer  */
+				cnmTimerStopTimer(prAdapter,
+					&prAisFsmInfo->rGoSyncChannelTimer);
+			}
+#endif
 			break;
 		default:
 			ASSERT(FALSE);

@@ -1,4 +1,35 @@
 # ---------------------------------------------------
+# OS option
+# ---------------------------------------------------
+os=$(CONFIG_MTK_SUPPORT_OS)
+
+ifeq ($(os),)
+os=linux
+endif
+ifeq ($(os), none)
+ccflags-y += -I/usr/include/
+ccflags-y += -DCFG_VIRTUAL_OS
+ccflags-y += -DCFG_REMIND_IMPLEMENT
+endif
+
+$(info os option: $(os))
+
+ifeq ($(os), none)
+kver_ge = $(shell echo 1)
+else
+# script for check the kernel version condition
+# example check kernel >= 5.4 : $(call kver_ge,5,4)
+kver_ge = $(shell \
+echo check_ver | awk '{if($(VERSION) < $(1)) {print 0} else { \
+if($(VERSION) > $(1)) {print 1} else { \
+if($(PATCHLEVEL) < $(2)) {print 0} else { \
+if($(PATCHLEVEL) > $(2)) {print 1} else { \
+if($(SUBLEVEL) < $(3)) {print 0} else {print 1} \
+}}}}}' \
+)
+endif
+$(info ker ver : $(VERSION), PATCHLEVEL : $(PATCHLEVEL), SUBLEVEL : $(SUBLEVEL))
+# ---------------------------------------------------
 # ALPS Setting
 # ---------------------------------------------------
 ifneq ($(KERNEL_OUT),)
@@ -76,6 +107,24 @@ ccflags-y:=$(filter-out -UCONNAC2X2,$(ccflags-y))
 ccflags-y += -DCONNAC2X2
 endif
 
+ifeq ($(CONFIG_CHIP_RESET_SUPPORT), n)
+    ccflags-y += -DCFG_CHIP_RESET_SUPPORT=0
+else
+    ccflags-y += -DCFG_CHIP_RESET_SUPPORT=1
+endif
+
+ifeq ($(CONFIG_CHIP_RESET_USE_DTS_GPIO_NUM), y)
+    ccflags-y += -DCFG_CHIP_RESET_USE_DTS_GPIO_NUM=1
+else
+    ccflags-y += -DCFG_CHIP_RESET_USE_DTS_GPIO_NUM=0
+endif
+
+ifeq ($(CONFIG_MTK_CONNSYS_DEDICATED_LOG_PATH), y)
+	ccflags-y += -DCFG_MTK_CONNSYS_DEDICATED_LOG_PATH=1
+else
+	ccflags-y += -DCFG_MTK_CONNSYS_DEDICATED_LOG_PATH=0
+endif
+
 ifeq ($(WIFI_ENABLE_GCOV), y)
 GCOV_PROFILE := y
 endif
@@ -119,6 +168,11 @@ else
     ccflags-y += -DCFG_SUPPORT_AEE=0
 endif
 
+CONFIG_SUPPORT_11B_DYNAMIC=y
+ifeq ($(CONFIG_SUPPORT_11B_DYNAMIC), y)
+	ccflags-y += -DCFG_SUPPORT_11B_DYNAMIC=1
+endif
+
 CONFIG_MTK_WPA3_SUPPORT=y
 ifeq ($(CONFIG_MTK_WPA3_SUPPORT), y)
 	ccflags-y += -DCFG_SUPPORT_CFG80211_AUTH=1
@@ -132,6 +186,29 @@ else
 	ccflags-y += -DCFG_SUPPORT_OWE=0
 	ccflags-y += -DCFG_SUPPORT_SUITB=0
 	ccflags-y += -DCFG_SUPPORT_CFG80211_QUEUE=0
+endif
+
+ifeq ($(CONFIG_SUPPORT_DFS_OFFLOAD), y)
+ifeq ($(call kver_ge,4,19,0),1)
+ccflags-y += -DCFG_SUPPORT_DFS_OFFLOAD=1
+else
+$(info "kernel ver unsuppoted DFS_OFFLOAD")
+ccflags-y += -DCFG_SUPPORT_DFS_OFFLOAD=0
+endif
+else
+ccflags-y += -DCFG_SUPPORT_DFS_OFFLOAD=0
+endif
+
+ifeq ($(CONFIG_MTK_SUPPORT_WSP), y)
+ccflags-y += -DCFG_SUPPORT_P2PGO_ACS=1
+ccflags-y += -DCFG_SUPPORT_TSF_SYNC=1
+ccflags-y += -DCFG_SUPPORT_P2P_CSA=1
+ccflags-y += -DCFG_SUPPORT_AUTO_SCC=1
+else
+ccflags-y += -DCFG_SUPPORT_P2PGO_ACS=0
+ccflags-y += -DCFG_SUPPORT_TSF_SYNC=0
+ccflags-y += -DCFG_SUPPORT_P2P_CSA=0
+ccflags-y += -DCFG_SUPPORT_AUTO_SCC=0
 endif
 
 # Disable ASSERT() for user load, enable for others
@@ -187,6 +264,14 @@ ccflags-y += -DCFG_SUPPORT_WAC=0
 # For Register DC wow callback
 # 1: enable, 0: disable
 ccflags-y += -DCFG_DC_USB_WOW_CALLBACK=0
+
+#For support MDNS
+ifeq ($(CONFIG_SUPPORT_MDNS_OFFLOAD),y)
+    ccflags-y += -DCFG_SUPPORT_MDNS_OFFLOAD=1
+else
+    ccflags-y += -DCFG_SUPPORT_MDNS_OFFLOAD=0
+endif
+
 ifeq ($(CFG_ENABLE_1RPD_MMPS_CTRL), y)
     ccflags-y += -DCFG_ENABLE_1RPD_MMPS_CTRL=1
 endif
@@ -291,9 +376,48 @@ ccflags-y += -DCFG_SUPPORT_OLD_VENDOR_HAL=0
 # 1: enable, 0: disable
 ccflags-y += -DCFG_SUPPORT_SCHED_SCAN=1
 
-#ifeq ($(MODULE_NAME),)
-#	MODULE_NAME := wlan_$(shell echo $(strip $(WLAN_CHIP_ID)) | tr A-Z a-z)_$(CONFIG_MTK_COMBO_WIFI_HIF)
-#endif
+# kernel 5.15 cfg80211 para is changed for mlo
+ifeq ($(call kver_ge,5,15,41),1)
+	ifeq ($(CONFIG_ANDROID), y)
+		ccflags-y += -DCFG_ADVANCED_80211_MLO=1
+	else
+		ccflags-y += -DCFG_ADVANCED_80211_MLO=0
+	endif
+else
+	ccflags-y += -DCFG_ADVANCED_80211_MLO=0
+endif
+
+# Google ANU and ANT kernel-5.15 have many differences in cfg80211 API
+# So, we need configurations to distinguish between them
+# IMB use $(BRANCH)
+#	T: android13-5.15
+#	U: android14-5.15
+# DTV use CONFIG_MTK_KERNEL_ANDROID_14 to identify android14 Kernel-5.15
+# DTV use CONFIG_MTK_KERNEL_ANDROID_13 to identify android13 Kernel-5.15
+
+ifeq ($(BRANCH), android13-5.15)
+    CFG_KERNEL_AN13_515=1
+    CFG_KERNEL_AN14_515=0
+else ifeq ($(BRANCH), android14-5.15)
+    CFG_KERNEL_AN13_515=0
+    CFG_KERNEL_AN14_515=1
+else ifeq ($(CONFIG_MTK_KERNEL_ANDROID_13), y)
+    CFG_KERNEL_AN13_515=1
+    CFG_KERNEL_AN14_515=0
+else ifeq ($(CONFIG_MTK_KERNEL_ANDROID_14), y)
+    CFG_KERNEL_AN13_515=0
+    CFG_KERNEL_AN14_515=1
+else
+    CFG_KERNEL_AN13_515=0
+    CFG_KERNEL_AN14_515=0
+endif
+
+ccflags-y += -DCFG_KERNEL_AN13_515=$(CFG_KERNEL_AN13_515)
+ccflags-y += -DCFG_KERNEL_AN14_515=$(CFG_KERNEL_AN14_515)
+
+ifeq ($(MODULE_NAME),)
+	MODULE_NAME := wlan_$(shell echo $(strip $(WLAN_CHIP_ID)) | tr A-Z a-z)_$(CONFIG_MTK_COMBO_WIFI_HIF)
+endif
 
 ccflags-y += -DDBG=0
 ccflags-y += -I$(src)/os -I$(src)/os/linux/include

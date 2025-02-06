@@ -1341,6 +1341,13 @@ enum ENUM_CSI_MODULATION_BW_TYPE_T {
 };
 #endif
 
+enum ENUM_TXALLOW_REASON {
+	TXALLOWED_MODE,
+	PROTECT_MODE_MISMATCH,
+	CSA_MODE,
+	MAX_REASON_NUM
+};
+
 /*----------------------------------------------------------------------------*/
 /* RSN structures                                                             */
 /*----------------------------------------------------------------------------*/

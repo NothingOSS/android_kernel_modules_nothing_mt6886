@@ -1,20 +1,9 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
 /*
- ***************************************************************************
- * Ralink Tech Inc.
- * 4F, No. 2 Technology	5th Rd.
- * Science-based Industrial Park
- * Hsin-chu, Taiwan, R.O.C.
- *
- * (c) Copyright 2002-2004, Ralink Technology, Inc.
- *
- * All rights reserved.	Ralink's source	code is	an unpublished work and the
- * use of a copyright notice does not imply otherwise. This source code
- * contains confidential trade secret material of Ralink Tech. Any attemp
- * or participation in deciphering, decoding, reverse engineering or in any
- * way altering	the source code	is stricitly prohibited, unless	the prior
- * written consent of Ralink Technology, Inc. is obtained.
- ***************************************************************************
+ * Copyright (c) 2021 MediaTek Inc.
+ */
 
+/*
 	Module Name:
 	pse.h
 
@@ -30,7 +19,11 @@
 #ifndef __PSE_H__
 #define __PSE_H__
 
+#if defined(_HIF_PCIE)
 #define PSE_BASE		0xc000
+#else
+#define PSE_BASE		0x82068000
+#endif
 
 /* PSE Reset Control Register */
 #define PSE_RESET (PSE_BASE + 0x00)

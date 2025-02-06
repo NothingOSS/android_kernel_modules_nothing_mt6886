@@ -1,54 +1,8 @@
-/*******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- ******************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
 	Module Name:
 	gl_qa_agent.c
@@ -2137,6 +2091,14 @@ static int32_t HQA_ReadEEPROM(struct net_device *prNetDev,
 	memcpy(&Len, HqaCmdFrame->Data + 2 * 1, 2);
 	Len = ntohs(Len);
 
+	/*  HQA_ReadEEPROM read size  only 16 bytes is used */
+	if (Len > EFUSE_BLOCK_SIZE) {
+		DBGLOG(INIT, ERROR,
+			"QA_AGENT HQA_ReadEEPROM Len : %d not supported\n",
+			Len);
+		return WLAN_STATUS_FAILURE;
+	}
+
 #if  (CFG_EEPROM_PAGE_ACCESS == 1)
 	prGlueInfo = *((struct GLUE_INFO **) netdev_priv(prNetDev));
 	ASSERT(prGlueInfo);
@@ -2302,6 +2264,7 @@ static int32_t HQA_ReadBulkEEPROM(struct net_device
 	struct PARAM_CUSTOM_ACCESS_EFUSE rAccessEfuseInfo;
 	uint32_t u4BufLen = 0;
 	uint8_t  u4Loop = 0;
+	uint32_t u4TotalOffset = 0;
 
 	uint16_t Buffer;
 	struct GLUE_INFO *prGlueInfo = NULL;
@@ -2328,8 +2291,24 @@ static int32_t HQA_ReadBulkEEPROM(struct net_device
 
 	memcpy(&Offset, HqaCmdFrame->Data + 2 * 0, 2);
 	Offset = ntohs(Offset);
+
+	if (Offset > (MAX_EEPROM_BUFFER_SIZE - 1)) {
+		DBGLOG(INIT, ERROR, "%s Offset : %d out of range (0x%x)\n",
+			__func__, Offset, MAX_EEPROM_BUFFER_SIZE);
+		return WLAN_STATUS_FAILURE;
+	}
+
 	memcpy(&Len, HqaCmdFrame->Data + 2 * 1, 2);
 	Len = ntohs(Len);
+
+    /* for bulk read, only 16 bytes is used */
+	if (Len > EFUSE_BLOCK_SIZE) {
+		DBGLOG(INIT, ERROR,
+			"QA_AGENT HQA_ReadBulkEEPROM Len : %d not supported\n",
+			Len);
+		return WLAN_STATUS_FAILURE;
+	}
+
 	tmp = Offset;
 	DBGLOG(INIT, INFO,
 	       "QA_AGENT HQA_ReadBulkEEPROM Offset : %d\n", Offset);
@@ -2372,8 +2351,17 @@ static int32_t HQA_ReadBulkEEPROM(struct net_device
 		}
 #endif
 		for (u4Loop = 0; u4Loop < Len; u4Loop += 2) {
+			/* Fix coverity issue: CID11341965 */
+			u4TotalOffset = Offset + u4Loop;
+			if ((u4TotalOffset) > EFUSE_BLOCK_SIZE - 1) {
+				DBGLOG(INIT, ERROR,
+					   "%s :Block accsess out of range, Offset %d u4Loop %d\n",
+					   __func__, Offset, u4Loop);
+				return WLAN_STATUS_FAILURE;
+			}
+
 			memcpy(&Buffer, prGlueInfo->prAdapter->aucEepromVaule +
-			       Offset + u4Loop, 2);
+			       u4TotalOffset, 2);
 			Buffer = ntohs(Buffer);
 			DBGLOG(INIT, INFO,
 			       ":From Efuse  u4Loop=%d  Buffer=%x\n",
@@ -2383,12 +2371,20 @@ static int32_t HQA_ReadBulkEEPROM(struct net_device
 
 	} else {  /* Read from EEPROM */
 		for (u4Loop = 0; u4Loop < Len; u4Loop += 2) {
-			memcpy(&Buffer, uacEEPROMImage + Offset + u4Loop, 2);
+			/* Fix coverity issue: CID11353922 */
+			u4TotalOffset = Offset + u4Loop;
+			if ((u4TotalOffset) > MAX_EEPROM_BUFFER_SIZE - 1) {
+				DBGLOG(INIT, ERROR,
+					   "%s :Block accsess out of range, Offset %d u4Loop %d\n",
+					   __func__, Offset, u4Loop);
+				return WLAN_STATUS_FAILURE;
+			}
+			memcpy(&Buffer, uacEEPROMImage + u4TotalOffset, 2);
 			Buffer = ntohs(Buffer);
 			memcpy(HqaCmdFrame->Data + 2 + u4Loop, &Buffer, 2);
 			DBGLOG(INIT, INFO,
 			       "QA_AGENT HQA_ReadBulkEEPROM u4Loop=%d  u4Value=%x\n",
-			       u4Loop, uacEEPROMImage[Offset + u4Loop]);
+			       u4Loop, uacEEPROMImage[u4TotalOffset]);
 		}
 	}
 #endif
@@ -2467,13 +2463,13 @@ static int32_t HQA_WriteBulkEEPROM(struct net_device
 	uint32_t u4BufLen = 0;
 	struct PARAM_CUSTOM_ACCESS_EFUSE rAccessEfuseInfoRead,
 		       rAccessEfuseInfoWrite;
-	uint16_t testBuffer1, testBuffer2, testBuffer;
 	uint16_t	*Buffer = NULL;
 	struct GLUE_INFO *prGlueInfo = NULL;
 	uint32_t rStatus = WLAN_STATUS_SUCCESS;
-	uint8_t  u4Loop = 0, u4Index = 0;
+	uint32_t Loop = 0, u4Index = 0;
 	uint16_t ucTemp2;
 	uint16_t i = 0;
+	uint32_t u4TotalOffset = 0;
 
 	prGlueInfo = *((struct GLUE_INFO **) netdev_priv(prNetDev));
 	prAdapter = prGlueInfo->prAdapter;
@@ -2488,12 +2484,21 @@ static int32_t HQA_WriteBulkEEPROM(struct net_device
 
 	memcpy(&Offset, HqaCmdFrame->Data + 2 * 0, 2);
 	Offset = ntohs(Offset);
+
+	if (Offset > (MAX_EEPROM_BUFFER_SIZE - 1)) {
+		DBGLOG(INIT, ERROR, "%s Offset : %d out of range (0x%x)\n",
+			__func__, Offset, MAX_EEPROM_BUFFER_SIZE);
+		return WLAN_STATUS_FAILURE;
+	}
+
 	memcpy(&Len, HqaCmdFrame->Data + 2 * 1, 2);
 	Len = ntohs(Len);
-
-	memcpy(&testBuffer1, HqaCmdFrame->Data + 2 * 2, Len);
-	testBuffer2 = ntohs(testBuffer1);
-	testBuffer = ntohs(testBuffer1);
+    /* for bulk access, only 16 bytes is used */
+	if (Len > EFUSE_BLOCK_SIZE) {
+		DBGLOG(INIT, ERROR, "%s Len : %d not supported\n",
+			__func__, Len);
+		return WLAN_STATUS_FAILURE;
+	}
 
 	DBGLOG(INIT, INFO, "Offset : %x, Len : %u\n", Offset, Len);
 
@@ -2508,43 +2513,34 @@ static int32_t HQA_WriteBulkEEPROM(struct net_device
 
 		kalMemCopy((uint8_t *)Buffer,
 			   (uint8_t *)HqaCmdFrame->Data + 4, Len);
-#if 0
-		for (u4Loop = 0; u4Loop < (Len); u4Loop++) {
 
+		for (Loop = 0; Loop < Len; Loop++) {
 			DBGLOG(INIT, INFO,
-			       "QA_AGENT HQA_WriteBulkEEPROM u4Loop=%d  u4Value=%x\n",
-			       u4Loop, Buffer[u4Loop]);
+				"HQA_WriteBulkEEPROM Loop=%d u4Value=%x\n",
+				Loop, Buffer[Loop]);
 		}
-#endif
-		if (g_ucEepromCurrentMode == BUFFER_BIN_MODE) {
+
+		if ((g_ucEepromCurrentMode == BUFFER_BIN_MODE)
+			&& Offset < MAX_EEPROM_BUFFER_SIZE - 1) {
 			/* EEPROM */
-			DBGLOG(INIT, INFO,
-			"Direct EEPROM buffer, offset=%x, len=%x\n",
-			Offset, Len);
-#if 0
-			for (i = 0; i < EFUSE_BLOCK_SIZE; i++)
-				memcpy(uacEEPROMImage + Offset + i, Buffer + i,
-				       1);
+			DBGLOG(INIT, INFO, "Direct EEPROM buffer, offset=%x\n",
+			       Offset);
 
-#endif
+			/* update buffer bin format first */
 			if (Len > 2) {
-				for (u4Loop = 0; u4Loop < EFUSE_BLOCK_SIZE/2;
-					 u4Loop++) {
-
-					Buffer[u4Loop] = ntohs(Buffer[u4Loop]);
-
+				for (Loop = 0; Loop < EFUSE_BLOCK_SIZE/2
+					&& Offset < MAX_EEPROM_BUFFER_SIZE - 1;
+					Loop++) {
+					Buffer[Loop] = ntohs(Buffer[Loop]);
 					uacEEPROMImage[Offset] =
-					Buffer[u4Loop] & 0xff;
-
+						Buffer[Loop] & 0xff;
 					uacEEPROMImage[Offset + 1] =
-					Buffer[u4Loop] >> 8 & 0xff;
-
+						Buffer[Loop] >> 8 & 0xff;
 					Offset += 2;
 				}
 			} else {
 				*Buffer = ntohs(*Buffer);
 				uacEEPROMImage[Offset] = *Buffer & 0xff;
-
 				uacEEPROMImage[Offset + 1] =
 				*Buffer >> 8 & 0xff;
 			}
@@ -2577,15 +2573,12 @@ static int32_t HQA_WriteBulkEEPROM(struct net_device
 				  sizeof(struct PARAM_CUSTOM_ACCESS_EFUSE));
 
 			if (Len > 2) {
-				for (u4Loop = 0; u4Loop < 8 ; u4Loop++)
-					Buffer[u4Loop] = ntohs(Buffer[u4Loop]);
+				for (Loop = 0; Loop < 8 ; Loop++)
+					Buffer[Loop] = ntohs(Buffer[Loop]);
 				memcpy(rAccessEfuseInfoWrite.aucData, Buffer,
 				       16);
 			} else {
 				u4Index = Offset % EFUSE_BLOCK_SIZE;
-				DBGLOG(INIT, INFO,
-				       "MT6632:QA_AGENT HQA_WriteBulkEEPROM Wr,u4Index=%x,Buffer=%x\n",
-				       u4Index, testBuffer);
 
 				*Buffer = ntohs(*Buffer);
 				DBGLOG(INIT, INFO,
@@ -2615,11 +2608,11 @@ static int32_t HQA_WriteBulkEEPROM(struct net_device
 
 			rAccessEfuseInfoWrite.u4Address =
 				(Offset / EFUSE_BLOCK_SIZE) * EFUSE_BLOCK_SIZE;
-			for (u4Loop = 0; u4Loop < (EFUSE_BLOCK_SIZE);
-			     u4Loop++) {
+			for (Loop = 0; Loop < (EFUSE_BLOCK_SIZE);
+			     Loop++) {
 				DBGLOG(INIT, INFO, " Loop=%d  aucData=%x\n",
-				       u4Loop,
-				       rAccessEfuseInfoWrite.aucData[u4Loop]);
+				       Loop,
+				       rAccessEfuseInfoWrite.aucData[Loop]);
 			}
 
 			DBGLOG(INIT, INFO, "Going for e-Fuse\n");
@@ -2641,10 +2634,19 @@ static int32_t HQA_WriteBulkEEPROM(struct net_device
 			memcpy(uacEEPROMImage + Offset, &ucTemp2, Len);
 		} else {
 			for (i = 0 ; i < 8 ; i++) {
+				/* Fix coverity issue: CID10708595 */
+				u4TotalOffset = Offset + 2 * i;
+				if (u4TotalOffset >
+				    MAX_EEPROM_BUFFER_SIZE - 1) {
+					DBGLOG(INIT, ERROR,
+					"%s u4TotalOffset : %d not supported\n",
+						__func__, u4TotalOffset);
+					return WLAN_STATUS_FAILURE;
+				}
 				memcpy(&ucTemp2,
 				       HqaCmdFrame->Data + 2 * 2 + 2 * i, 2);
 				ucTemp2 = ntohs(ucTemp2);
-				memcpy(uacEEPROMImage + Offset + 2 * i,
+				memcpy(uacEEPROMImage + u4TotalOffset,
 				       &ucTemp2, 2);
 			}
 
@@ -5360,8 +5362,19 @@ static int32_t HQA_GetDumpRecal(struct net_device *prNetDev,
 
 	DBGLOG(RFTEST, INFO, "prReCalInfo->u4Count = [%d]\n",
 						 prReCalInfo->u4Count);
-	if (prReCalInfo->u4Count > 0) {
+	/* according nicExtEventReCalData prCalArray is 2048 groups */
+	if (prReCalInfo->u4Count > 0 &&
+	    prReCalInfo->u4Count <= (CAL_ARRAY_SIZE - 6) /
+				    (3 * sizeof(u4Value))) {
 		for (i = 0; i < prReCalInfo->u4Count; i++) {
+
+			if ((6 + u4RespLen + (3 * sizeof(u4Value))) >
+				sizeof(HqaCmdFrame->Data)) {
+				DBGLOG(RFTEST, INFO,
+					"GetDumpRecal HQAFrame size limit reached");
+				break;
+			}
+
 			u4Value = ntohl(prCalArray[i].u4CalId);
 			kalMemCopy(HqaCmdFrame->Data + 6 + u4RespLen,
 					   &u4Value,
@@ -5398,7 +5411,7 @@ static int32_t HQA_GetDumpRecal(struct net_device *prNetDev,
 	if (prReCalInfo->prCalArray != NULL) {
 		kalMemFree(prReCalInfo->prCalArray,
 			       VIR_MEM_TYPE,
-			       2048 * sizeof(struct RECAL_DATA_T));
+			       CAL_ARRAY_SIZE * sizeof(struct RECAL_DATA_T));
 		prReCalInfo->prCalArray = 0;
 		prReCalInfo->u4Count = 0;
 	}
@@ -6938,14 +6951,18 @@ static int32_t HQA_MUSetMUTable(struct net_device *prNetDev,
 {
 	int32_t i4Ret = 0;
 	uint8_t *prTable;
-	uint16_t u2Len = 0;
+	uint32_t u2Len = 0;
 	uint32_t u4SuMu = 0;
+
+	u2Len = ntohl(HqaCmdFrame->Length) - sizeof(u4SuMu);
+	if (u2Len >= HQA_CMD_FRAME_DATA_MAX_LEN - sizeof(u4SuMu)) {
+		DBGLOG(RFTEST, INFO, "HQA_MUSetMUTable u2Len error\n");
+		return i4Ret;
+	}
 
 	prTable = kmalloc_array(u2Len, sizeof(uint8_t), GFP_KERNEL);
 
 	DBGLOG(RFTEST, INFO, "QA_AGENT HQA_MUSetMUTable\n");
-
-	u2Len = ntohl(HqaCmdFrame->Length) - sizeof(u4SuMu);
 
 	memcpy(&u4SuMu, HqaCmdFrame->Data + 4 * 0, 4);
 	u4SuMu = ntohl(u4SuMu);

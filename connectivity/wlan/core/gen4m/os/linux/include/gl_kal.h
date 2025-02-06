@@ -291,6 +291,7 @@ struct BOOST_INFO {
 	struct THREAD_INFO rHifThreadInfo;
 	struct THREAD_INFO rMainThreadInfo;
 	struct THREAD_INFO rRxThreadInfo;
+	struct THREAD_INFO rRxNapiThreadInfo;
 	uint32_t u4RpsMap;
 	uint32_t u4ISRMask;
 	int32_t i4TxFreeMsduWorkCpu;
@@ -1053,6 +1054,8 @@ static inline void kalCfg80211VendorEvent(void *pvPacket)
 #define kalUdelay(u4USec)                           udelay(u4USec)
 #define kalMdelay(u4MSec)                           mdelay(u4MSec)
 #define kalMsleep(u4MSec)                           msleep(u4MSec)
+#define kalMsleep_interruptible(u4MSec)             msleep_interruptible(u4MSec)
+
 #define kalUsleep(u4USec) \
 { \
 	if (u4USec > 10000) \
@@ -1174,11 +1177,11 @@ int8_t atoi(uint8_t ch);
 #else
 #define _kalRequestFirmware request_firmware
 #endif
-#define kal_init_completion(rComp) \
-	init_completion(rComp)
+#define kal_init_completion(rComp)  init_completion(rComp)
 
-#define kal_completion_done(rComp) \
-	completion_done(rComp)
+#define kal_completion_done(rComp)  completion_done(rComp)
+
+#define kal_reinit_completion(rComp)  reinit_completion(rComp)
 
 #define kal_completion struct completion
 
@@ -2354,6 +2357,7 @@ void kal_gro_flush(struct ADAPTER *prAdapter);
 void kal_napi_schedule(struct napi_struct *n);
 int kalNapiPoll(struct napi_struct *napi, int budget);
 uint8_t kalNapiInit(struct GLUE_INFO *prGlueInfo);
+uint8_t kalNapiUninit(struct GLUE_INFO *prGlueInfo);
 uint8_t kalNapiRxDirectInit(struct GLUE_INFO *prGlueInfo);
 uint8_t kalNapiRxDirectUninit(struct GLUE_INFO *prGlueInfo);
 uint8_t kalNapiEnable(struct GLUE_INFO *prGlueInfo);

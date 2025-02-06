@@ -195,6 +195,10 @@ int32_t kalBoostCpu(struct ADAPTER *prAdapter,
 			kalSetTaskUtilMinPct(prGlueInfo->u4TxThreadPid, 100);
 			kalSetTaskUtilMinPct(prGlueInfo->u4RxThreadPid, 100);
 			kalSetTaskUtilMinPct(prGlueInfo->u4HifThreadPid, 100);
+#if CFG_SUPPORT_RX_NAPI_THREADED
+			kalSetTaskUtilMinPct(prGlueInfo->u4RxNapiThreadPid,
+				100);
+#endif
 			kalSetRpsMap(prGlueInfo, CPU_BIG_CORE);
 			kalSetCpuFreq(i4Freq);
 			kalSetDramBoost(prAdapter, TRUE);
@@ -208,6 +212,9 @@ int32_t kalBoostCpu(struct ADAPTER *prAdapter,
 			kalSetTaskUtilMinPct(prGlueInfo->u4TxThreadPid, 0);
 			kalSetTaskUtilMinPct(prGlueInfo->u4RxThreadPid, 0);
 			kalSetTaskUtilMinPct(prGlueInfo->u4HifThreadPid, 0);
+#if CFG_SUPPORT_RX_NAPI_THREADED
+			kalSetTaskUtilMinPct(prGlueInfo->u4RxNapiThreadPid, 0);
+#endif
 			kalSetRpsMap(prGlueInfo, CPU_LITTLE_CORE);
 			kalSetCpuFreq(i4Freq);
 			kalSetDramBoost(prAdapter, FALSE);
@@ -220,13 +227,13 @@ int32_t kalBoostCpu(struct ADAPTER *prAdapter,
 
 uint32_t kalGetFwVerOffset(void)
 {
-#define EMI_BASE_6635_OFFSET	0x240000
+#define EMI_BASE_6635_6637_OFFSET	0x240000
 	const uint32_t adie_chip_id = mtk_wcn_wmt_ic_info_get(WMTCHIN_ADIE);
 
 	DBGLOG(INIT, TRACE, "adie_id: 0x%x\n", adie_chip_id);
-	if (adie_chip_id == 0x6635) {
-		return EMI_BASE_6635_OFFSET+FW_VERSION_OFFSET;
-	}
+	if (adie_chip_id == 0x6635 || adie_chip_id == 0x6637)
+		return EMI_BASE_6635_6637_OFFSET + FW_VERSION_OFFSET;
+
 	return FW_VERSION_OFFSET;
 }
 
@@ -275,6 +282,7 @@ int32_t kalGetFwFlavorByPlat(uint8_t *flavor)
 	DBGLOG(INIT, INFO, "chip_id: 0x%x, adie_id: 0x%x\n",
 		chip_id, adie_chip_id);
 	switch (adie_chip_id) {
+	case 0x6637:
 	case 0x6635:
 	case 0x6631:
 		/* length need to consider end character */

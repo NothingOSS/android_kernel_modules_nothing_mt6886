@@ -217,7 +217,12 @@ static signed int mt6635_pwroff(signed int data)
 
 static unsigned short mt6635_get_chipid(void)
 {
-	return 0x6635;
+	unsigned int adie = mt6635_hw_info.chip_id;
+
+	if (fm_wcn_ops.ei.get_get_adie)
+		adie = fm_wcn_ops.ei.get_get_adie();
+
+	return (unsigned short) adie;
 }
 
 /*  MT6635_SetAntennaType - set Antenna type
@@ -453,9 +458,6 @@ static signed int mt6635_pwrup_clock_on_reg_op(unsigned char *buf, signed int bu
 
 	de_emphasis = fm_config.rx_cfg.deemphasis;
 	de_emphasis &= 0x0001;	/* rang 0~1 */
-	/* 2,turn on top clock */
-	pkt_size += fm_bop_top_write(0xA00, 0xFFFFFFFF, &buf[pkt_size], buf_size - pkt_size);
-	/* wr top cr a00 ffffffff */
 
 	/* 3,enable MTCMOS */
 	pkt_size += fm_bop_top_write(0x160, 0x00000030, &buf[pkt_size], buf_size - pkt_size);
@@ -534,8 +536,11 @@ static signed int mt6635_pwrup_digital_init_reg_op(unsigned char *buf, signed in
 	pkt_size += fm_bop_write(0xDA, 0x0014, &buf[pkt_size], buf_size - pkt_size);	/* wr DA 0x0014 */
 	/* D2.6 set SDM coeff1_L */
 	pkt_size += fm_bop_write(0xDB, 0x2A38, &buf[pkt_size], buf_size - pkt_size);	/* wr DB 0x2A38 */
-	/* D2.7 set 26M clock */
-	pkt_size += fm_bop_write(0x23, 0x4000, &buf[pkt_size], buf_size - pkt_size);	/* wr 23 4000 */
+
+	if (mt6635_hw_info.chip_id == 0x6635) {
+		/* D2.7 set 26M clock */
+		pkt_size += fm_bop_write(0x23, 0x4000, &buf[pkt_size], buf_size - pkt_size);	/* wr 23 4000 */
+	}
 
 	/* Part E: FM Digital Init: fm_rgf_maincon */
 
@@ -608,17 +613,71 @@ static signed int mt6635_pwrup_fine_tune_reg_op(unsigned char *buf, signed int b
 	return pkt_size - 4;
 }
 
+static signed int mt6637_pwrup_fine_tune_reg_op(unsigned char *buf, signed int buf_size)
+{
+	signed int pkt_size = 4;
+
+	if (buf == NULL) {
+		WCN_DBG(FM_ERR | CHIP, "%s invalid pointer\n", __func__);
+		return -1;
+	}
+	if (buf_size < TX_BUF_SIZE) {
+		WCN_DBG(FM_ERR | CHIP, "%s invalid buf size(%d)\n", __func__, buf_size);
+		return -2;
+	}
+
+	/* C10.1 set host control RF register */
+	pkt_size += fm_bop_write(0x60, 0x0007, &buf[pkt_size], buf_size - pkt_size);
+
+	/* C10.2 fine tune RF setting */
+	pkt_size += fm_bop_write(0x01, 0xBEE8, &buf[pkt_size], buf_size - pkt_size);
+	/* C10.3 */
+	pkt_size += fm_bop_write(0x03, 0xF6ED, &buf[pkt_size], buf_size - pkt_size);
+	/* C10.4 */
+	pkt_size += fm_bop_write(0x15, 0x0D80, &buf[pkt_size], buf_size - pkt_size);
+	/* C10.5 */
+	pkt_size += fm_bop_write(0x16, 0x0068, &buf[pkt_size], buf_size - pkt_size);
+	/* C10.6 */
+	pkt_size += fm_bop_write(0x17, 0x0932, &buf[pkt_size], buf_size - pkt_size);
+	/* C10.7 */
+	pkt_size += fm_bop_write(0x34, 0x807F, &buf[pkt_size], buf_size - pkt_size);
+	/* C10.8 */
+	pkt_size += fm_bop_write(0x35, 0x311E, &buf[pkt_size], buf_size - pkt_size);
+	/* C10.9 */
+	pkt_size += fm_bop_write(0x40, 0x0100, &buf[pkt_size], buf_size - pkt_size);
+
+	/* C10.11 */
+	pkt_size += fm_bop_write(0x43, 0x816F, &buf[pkt_size], buf_size - pkt_size);
+	/* C10.12 wr 43[10]=1 */
+	pkt_size += fm_bop_modify(0x43, 0xF7FF, 0x0800, &buf[pkt_size], buf_size - pkt_size);
+	/* C10.13 wait 52us */
+	pkt_size += fm_bop_udelay(52, &buf[pkt_size], buf_size - pkt_size);
+	/* C10.14 rd 42[5]=1 */
+	pkt_size += fm_bop_rd_until(0x42, 0x0020, 0x0020, &buf[pkt_size], buf_size - pkt_size);
+	/* C10.15 wr 43[10]=0 */
+	pkt_size += fm_bop_modify(0x43, 0xF7FF, 0x0000, &buf[pkt_size], buf_size - pkt_size);
+
+	return pkt_size - 4;
+}
+
 /*
- * mt6635_pwrup_fine_tune - Wholechip FM Power Up: step 5, FM RF fine tune setting
+ * connac1x_pwrup_fine_tune - Wholechip FM Power Up: step 5, FM RF fine tune setting
  * @buf - target buf
  * @buf_size - buffer size
  * return package size
  */
-static signed int mt6635_pwrup_fine_tune(unsigned char *buf, signed int buf_size)
+static signed int connac1x_pwrup_fine_tune(unsigned char *buf, signed int buf_size)
 {
 	signed int pkt_size = 0;
 
-	pkt_size = mt6635_pwrup_fine_tune_reg_op(buf, buf_size);
+	if (mt6635_hw_info.chip_id == 0x6635)
+		pkt_size = mt6635_pwrup_fine_tune_reg_op(buf, buf_size);
+	else if (mt6635_hw_info.chip_id == 0x6637) {
+		pkt_size = mt6637_pwrup_fine_tune_reg_op(buf, buf_size);
+	} else
+		WCN_DBG(FM_ERR | CHIP, "%s invalid chip_id:0x%08x\n", __func__,
+			mt6635_hw_info.chip_id);
+
 	return fm_op_seq_combine_cmd(buf, FM_ENABLE_OPCODE, pkt_size);
 }
 
@@ -835,13 +894,26 @@ static void mt6635_show_reg(void)
 		debug_reg1[0], debug_reg1[1], debug_reg1[2], debug_reg2[0], debug_reg2[1], debug_reg2[2]);
 }
 
+static void mt6635_copy_by_mask(unsigned char src, unsigned char dst,
+				unsigned short mask_and)
+{
+	unsigned short data_src = 0, data_dst = 0;
+
+	fm_reg_read(src, &data_src);
+	fm_reg_read(dst, &data_dst);
+	/* get the value we want from src */
+	data_src &= mask_and;
+	/* write the value to dst */
+	data_dst |= data_src;
+	fm_reg_write(dst, data_dst);
+}
+
 static signed int mt6635_PowerUp(unsigned short *chip_id, unsigned short *device_id)
 {
 	signed int ret = 0;
 	unsigned short pkt_size;
 	unsigned short tmp_reg = 0;
-	unsigned int tem = 0;
-	unsigned int host_reg = 0;
+	unsigned int tem = 0, tmp_chip_id = 0;
 
 	if (chip_id == NULL) {
 		WCN_DBG(FM_ERR | CHIP, "%s,invalid pointer\n", __func__);
@@ -874,40 +946,27 @@ static signed int mt6635_PowerUp(unsigned short *chip_id, unsigned short *device
 	tem = tem | 0x00800000;
 	fm_host_reg_write(0x81021200, tem);
 
-	/* Enable the power_RG_ready */
-	ret = fm_top_reg_read(0x0a18, &host_reg);
+	/* B1 Enable Top Clock */
+	ret = fm_top_reg_write(0xA00, 0xFFFFFFFF);
 	if (ret) {
-		WCN_DBG(FM_ERR | CHIP, "power up read top 0xa18 failed\n");
-		return ret;
-	}
-	ret = fm_top_reg_write(0x0a18, host_reg | (0x3 << 26));
-	if (ret) {
-		WCN_DBG(FM_ERR | CHIP, "power up write top 0xa18 failed\n");
+		WCN_DBG(FM_ALT | CHIP, "Enable top clock failed\n");
 		return ret;
 	}
 
-	/* Enable the buffer to top digital domain */
-	ret = fm_top_reg_read(0x0a18, &host_reg);
+	/* B2 Read A-die id */
+	ret = fm_top_reg_read(0x02C, &tem);
 	if (ret) {
-		WCN_DBG(FM_ERR | CHIP, "power up read top 0xa18 failed\n");
-		return ret;
-	}
-	ret = fm_top_reg_write(0x0a18, host_reg | (0x1f << 25));
-	if (ret) {
-		WCN_DBG(FM_ERR | CHIP, "power up write top 0xa18 failed\n");
+		WCN_DBG(FM_ALT | CHIP, "Read A-die Top Id failed\n");
 		return ret;
 	}
 
-	/* Enable the buffer to FM RF domain */
-	ret = fm_top_reg_read(0x0a18, &host_reg);
-	if (ret) {
-		WCN_DBG(FM_ERR | CHIP, "power up read top 0xa18 failed\n");
-		return ret;
-	}
-	ret = fm_top_reg_write(0x0a18, host_reg | (0x01 << 12));
-	if (ret) {
-		WCN_DBG(FM_ERR | CHIP, "power up write top 0xa18 failed\n");
-		return ret;
+	tmp_chip_id = tem >> 16;
+	if (tmp_chip_id == 0x6635 || tmp_chip_id == 0x6637) {
+		mt6635_hw_info.chip_id = (signed int)tmp_chip_id;
+		WCN_DBG(FM_NTC | CHIP, "A-die id 0x%08x\n", tem);
+	} else {
+		WCN_DBG(FM_ALT | CHIP, "Unexpected A-die id 0x%08x\n", tem);
+		return -FM_EFW;
 	}
 
 	if (FM_LOCK(cmd_buf_lock))
@@ -925,19 +984,14 @@ static signed int mt6635_PowerUp(unsigned short *chip_id, unsigned short *device
 	/* Wholechip FM Power Up: step 2, read HW version */
 	mt6635_show_reg();
 	fm_reg_read(0x62, &tmp_reg);
-	/* chip_id = tmp_reg; */
-	if (tmp_reg == 0x6635)
-		*chip_id = 0x6635;
-	*device_id = tmp_reg;
-	mt6635_hw_info.chip_id = (signed int) tmp_reg;
-	WCN_DBG(FM_DBG | CHIP, "chip_id:0x%04x\n", tmp_reg);
-
-	if ((mt6635_hw_info.chip_id != 0x6635)) {
+	if (tmp_reg == tmp_chip_id)
+		*device_id = tmp_reg;
+	else {
 		mt6635_show_reg();
-		WCN_DBG(FM_NTC | CHIP, "fm sys error, reset hw, chip_id = 0x%08x\n", mt6635_hw_info.chip_id);
+		WCN_DBG(FM_NTC | CHIP, "fm sys error, A die id 0x%04x\n", tmp_reg);
 		return -FM_EFW;
-
 	}
+
 	/* Wholechip FM Power Up: step 3, patch download */
 	ret = mt6635_pwrup_DSP_download(mt6635_patch_tbl);
 	if (ret) {
@@ -959,12 +1013,20 @@ static signed int mt6635_PowerUp(unsigned short *chip_id, unsigned short *device
 	/* Wholechip FM Power Up: step 5, FM RF fine tune setting */
 	if (FM_LOCK(cmd_buf_lock))
 		return -FM_ELOCK;
-	pkt_size = mt6635_pwrup_fine_tune(cmd_buf, TX_BUF_SIZE);
+	pkt_size = connac1x_pwrup_fine_tune(cmd_buf, TX_BUF_SIZE);
 	ret = fm_cmd_tx(cmd_buf, pkt_size, FLAG_EN, SW_RETRY_CNT, EN_TIMEOUT, NULL);
 	FM_UNLOCK(cmd_buf_lock);
 	if (ret) {
 		WCN_DBG(FM_ALT | CHIP, "mt6635_pwrup_fine_tune failed\n");
 		return ret;
+	}
+
+	if (mt6635_hw_info.chip_id == 0x6637) {
+		/* C10.16 rd 42[4:0] && C10.17 wr 9[4:0]*/
+		mt6635_copy_by_mask(0x42, 0x9, 0x1F);
+
+		/* C11 set DSP control RF register */
+		fm_reg_write(0x60, 0x000F);
 	}
 
 	/* Enable connsys FM 2 wire RX */
@@ -1089,17 +1151,65 @@ static signed int mt6635_set_freq_fine_tune_reg_op(unsigned char *buf, signed in
 	return pkt_size - 4;
 }
 
+static signed int mt6637_set_freq_fine_tune_reg_op(unsigned char *buf, signed int buf_size)
+{
+	signed int pkt_size = 4;
+
+	if (buf == NULL) {
+		WCN_DBG(FM_ERR | CHIP, "%s invalid pointer\n", __func__);
+		return -1;
+	}
+	if (buf_size < TX_BUF_SIZE) {
+		WCN_DBG(FM_ERR | CHIP, "%s invalid buf size(%d)\n", __func__, buf_size);
+		return -2;
+	}
+	/* disable DCOC IDAC auto-disable */
+	pkt_size += fm_bop_modify(0x33, 0xFDFF, 0x0000, &buf[pkt_size], buf_size - pkt_size);
+	/* A1 Host control RF register */
+	pkt_size += fm_bop_write(0x60, 0x0007, &buf[pkt_size], buf_size - pkt_size);
+	/* F3 DCOC @ LNA = 7 */
+	pkt_size += fm_bop_write(0x40, 0x01AF, &buf[pkt_size], buf_size - pkt_size);
+	pkt_size += fm_bop_write(0x03, 0xF6ED, &buf[pkt_size], buf_size - pkt_size);
+	pkt_size += fm_bop_write(0x07, 0x0140, &buf[pkt_size], buf_size - pkt_size);
+	pkt_size += fm_bop_write(0x01, 0xEEE8, &buf[pkt_size], buf_size - pkt_size);
+	pkt_size += fm_bop_write(0x3F, 0x3221, &buf[pkt_size], buf_size - pkt_size);
+	/* wait 1ms */
+	pkt_size += fm_bop_udelay(1000, &buf[pkt_size], buf_size - pkt_size);
+	pkt_size += fm_bop_rd_until(0x3F, 0x001F, 0x0001, &buf[pkt_size], buf_size - pkt_size);
+	pkt_size += fm_bop_write(0x3F, 0x0220, &buf[pkt_size], buf_size - pkt_size);
+	pkt_size += fm_bop_write(0x40, 0x0100, &buf[pkt_size], buf_size - pkt_size);
+	pkt_size += fm_bop_write(0x01, 0xBEE8, &buf[pkt_size], buf_size - pkt_size);
+	pkt_size += fm_bop_write(0x30, 0x0000, &buf[pkt_size], buf_size - pkt_size);
+	pkt_size += fm_bop_write(0x36, 0x017A, &buf[pkt_size], buf_size - pkt_size);
+	/* set threshold = 3 */
+	pkt_size += fm_bop_modify(0x3F, 0x0FFF, 0x3000, &buf[pkt_size], buf_size - pkt_size);
+	/* enable DCOC IDAC auto-disable */
+	pkt_size += fm_bop_modify(0x33, 0xFDFF, 0x0200, &buf[pkt_size], buf_size - pkt_size);
+
+	/* F4 set DSP control RF register */
+	pkt_size += fm_bop_write(0x60, 0x000F, &buf[pkt_size], buf_size - pkt_size);
+
+	return pkt_size - 4;
+}
+
 /*
- * mt6635_set_freq_fine_tune - FM RF fine tune setting
+ * connac1x_set_freq_fine_tune - FM RF fine tune setting
  * @buf - target buf
  * @buf_size - buffer size
  * return package size
  */
-static signed int mt6635_set_freq_fine_tune(unsigned char *buf, signed int buf_size)
+static signed int connac1x_set_freq_fine_tune(unsigned char *buf, signed int buf_size)
 {
 	signed int pkt_size = 0;
 
-	pkt_size = mt6635_set_freq_fine_tune_reg_op(buf, buf_size);
+	if (mt6635_hw_info.chip_id == 0x6635)
+		pkt_size = mt6635_set_freq_fine_tune_reg_op(buf, buf_size);
+	else if (mt6635_hw_info.chip_id == 0x6637)
+		pkt_size = mt6637_set_freq_fine_tune_reg_op(buf, buf_size);
+	else
+		WCN_DBG(FM_ERR | CHIP, "%s invalid chip_id:0x%08x\n", __func__,
+			mt6635_hw_info.chip_id);
+
 	return fm_op_seq_combine_cmd(buf, FM_ENABLE_OPCODE, pkt_size);
 }
 
@@ -1150,7 +1260,7 @@ static bool mt6635_SetFreq(unsigned short freq)
 
 	if (FM_LOCK(cmd_buf_lock))
 		return -FM_ELOCK;
-	pkt_size = mt6635_set_freq_fine_tune(cmd_buf, TX_BUF_SIZE);
+	pkt_size = connac1x_set_freq_fine_tune(cmd_buf, TX_BUF_SIZE);
 	ret = fm_cmd_tx(cmd_buf, pkt_size, FLAG_EN, SW_RETRY_CNT, EN_TIMEOUT, NULL);
 	FM_UNLOCK(cmd_buf_lock);
 	if (ret) {
@@ -1996,6 +2106,53 @@ static const unsigned short mt6635_TDD_list[] = {
 	0x0001			/* 10800 */
 };
 
+static const unsigned short mt6637_TDD_list[] = {
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 6500~6595 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 6600~6695 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 6700~6795 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 6800~6895 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 6900~6995 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 7000~7095 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 7100~7195 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 7200~7295 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 7300~7395 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 7400~7495 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 7500~7595 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 7600~7695 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 7700~7795 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 7800~7895 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 7900~7995 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 8000~8095 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 8100~8195 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 8200~8295 */
+	0x0000, 0x0000, 0x0000, 0x0100, 0x1000,	/* 8300~8395 */
+	0x0101, 0x0000, 0x0000, 0x0000, 0x0000,	/* 8400~8495 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 8500~8595 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 8600~8695 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 8700~8795 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 8800~8895 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 8900~8995 */
+	0x0000, 0x0000, 0x0101, 0x0101, 0x0101,	/* 9000~9095 */
+	0x0101, 0x0000, 0x0000, 0x0000, 0x0000,	/* 9100~9195 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 9200~9295 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 9300~9395 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 9400~9495 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 9500~9595 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 9600~9695 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0100,	/* 9700~9795 */
+	0x0101, 0x0101, 0x0101, 0x0101, 0x0101,	/* 9800~9895 */
+	0x0101, 0x0101, 0x0001, 0x0000, 0x0000,	/* 9900~9995 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 10000~10095 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 10100~10195 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 10200~10295 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 10300~10395 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 10400~10495 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000,	/* 10500~10595 */
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0111,	/* 10600~10695 */
+	0x0101, 0x0101, 0x0101, 0x0101, 0x0101,	/* 10700~10795 */
+	0x0001			/* 10800 */
+};
+
 static const unsigned short mt6635_TDD_Mask[] = {
 	0x0001, 0x0010, 0x0100, 0x1000
 };
@@ -2043,6 +2200,18 @@ static bool mt6635_TDD_chan_check(unsigned short freq)
 	unsigned int i = 0;
 	unsigned short freq_tmp = freq;
 	signed int ret = 0;
+	const unsigned short *pTDD_list;
+	signed int array_size = 0;
+
+	if (mt6635_hw_info.chip_id == 0x6635) {
+		pTDD_list = &mt6635_TDD_list[0];
+		array_size = ARRAY_SIZE(mt6635_TDD_list);
+	} else if (mt6635_hw_info.chip_id == 0x6637) {
+		pTDD_list = &mt6637_TDD_list[0];
+		array_size = ARRAY_SIZE(mt6637_TDD_list);
+	} else
+		WCN_DBG(FM_ERR | CHIP, "%s invalid chip_id:0x%08x\n", __func__,
+			mt6635_hw_info.chip_id);
 
 	ret = fm_get_channel_space(freq_tmp);
 	if (ret == 0)
@@ -2051,13 +2220,13 @@ static bool mt6635_TDD_chan_check(unsigned short freq)
 		return false;
 
 	i = (freq_tmp - 6500) / 5;
-	if ((i / 4) >= ARRAY_SIZE(mt6635_TDD_list)) {
+	if ((i / 4) >= array_size) {
 		WCN_DBG(FM_ERR | CHIP, "Freq index out of range(%d),max(%zd)\n",
-			i / 4, ARRAY_SIZE(mt6635_TDD_list));
+			i / 4, array_size);
 		return false;
 	}
 
-	if (mt6635_TDD_list[i / 4] & mt6635_TDD_Mask[i % 4]) {
+	if (pTDD_list[i / 4] & mt6635_TDD_Mask[i % 4]) {
 		WCN_DBG(FM_DBG | CHIP, "Freq %d use TDD solution\n", freq);
 		return true;
 	} else
@@ -2094,6 +2263,9 @@ static bool mt6635_SPI_hopping_check(unsigned short freq)
 {
 	signed int size;
 
+	if (mt6635_hw_info.chip_id == 0x6637)
+		return false;
+
 	size = ARRAY_SIZE(mt6635_SPI_hopping_list);
 
 	if (fm_get_channel_space(freq) == 0)
@@ -2101,9 +2273,9 @@ static bool mt6635_SPI_hopping_check(unsigned short freq)
 
 	while (size) {
 		if (mt6635_SPI_hopping_list[size - 1] == freq)
-			return 1;
+			return true;
 		size--;
 	}
 
-	return 0;
+	return false;
 }

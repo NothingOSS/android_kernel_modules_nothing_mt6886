@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /******************************************************************************
 *[File]             hif_api.c
 *[Version]          v1.0
@@ -260,8 +214,11 @@ uint32_t halTxUSBSendCmd(IN struct GLUE_INFO *prGlueInfo, IN uint8_t ucTc, IN st
 	int ret;
 
 	prUsbReq = glUsbDequeueReq(prHifInfo, &prHifInfo->rTxCmdFreeQ, &prHifInfo->rTxCmdQLock);
-	if (prUsbReq == NULL)
+	if (prUsbReq == NULL) {
+		DBGLOG(HAL, ERROR, "TX CMD CID[0x%X] SEQ[%d] no URB!\n",
+				prCmdInfo->ucCID, prCmdInfo->ucCmdSeqNum);
 		return WLAN_STATUS_RESOURCES;
+	}
 
 	prBufCtrl = prUsbReq->prBufCtrl;
 
@@ -273,7 +230,9 @@ uint32_t halTxUSBSendCmd(IN struct GLUE_INFO *prGlueInfo, IN uint8_t ucTc, IN st
 		return WLAN_STATUS_RESOURCES;
 	}
 
-	DBGLOG(HAL, INFO, "TX URB[0x%p]\n", prUsbReq->prUrb);
+	DBGLOG(HAL, INFO, "TX CMD CID[0x%X] URB[0x%p] SEQ[%d]\n",
+			prCmdInfo->ucCID,
+			prUsbReq->prUrb, prCmdInfo->ucCmdSeqNum);
 
 	prChipInfo = prGlueInfo->prAdapter->chip_info;
 	HAL_WRITE_HIF_TXD(prChipInfo, prBufCtrl->pucBuf, (prCmdInfo->u4TxdLen + prCmdInfo->u4TxpLen));
@@ -417,6 +376,8 @@ void halTxCancelAllSending(IN struct ADAPTER *prAdapter)
 	struct GLUE_INFO *prGlueInfo;
 	struct USB_REQ *prUsbReq, *prUsbReqNext;
 	struct GL_HIF_INFO *prHifInfo;
+	struct list_head rTempTxCmdSendingQ;
+	unsigned long flags;
 #if CFG_USB_TX_AGG
 	uint8_t ucTc;
 #endif
@@ -424,8 +385,14 @@ void halTxCancelAllSending(IN struct ADAPTER *prAdapter)
 	ASSERT(prAdapter);
 	prGlueInfo = prAdapter->prGlueInfo;
 	prHifInfo = &prGlueInfo->rHifInfo;
+	INIT_LIST_HEAD(&rTempTxCmdSendingQ);
 
-	list_for_each_entry_safe(prUsbReq, prUsbReqNext, &prHifInfo->rTxCmdSendingQ, list) {
+	spin_lock_irqsave(&prHifInfo->rTxCmdQLock, flags);
+	list_splice_init(&prHifInfo->rTxCmdSendingQ, &rTempTxCmdSendingQ);
+	spin_unlock_irqrestore(&prHifInfo->rTxCmdQLock, flags);
+
+	list_for_each_entry_safe(prUsbReq, prUsbReqNext,
+				 &rTempTxCmdSendingQ, list) {
 		usb_kill_urb(prUsbReq->prUrb);
 	}
 
@@ -964,6 +931,8 @@ uint32_t halRxUSBReceiveEvent(IN struct ADAPTER *prAdapter, IN u_int8_t fgFillUr
 	int ret;
 
 	while (1) {
+		if (prAdapter->fgIsIntEnable == FALSE)
+			break;
 		prUsbReq = glUsbDequeueReq(prHifInfo, &prHifInfo->rRxEventFreeQ, &prHifInfo->rRxEventQLock);
 		if (prUsbReq == NULL)
 			return WLAN_STATUS_RESOURCES;
@@ -1075,6 +1044,8 @@ uint32_t halRxUSBReceiveData(IN struct ADAPTER *prAdapter)
 	prHifInfo = &prGlueInfo->rHifInfo;
 
 	while (1) {
+		if (prAdapter->fgIsIntEnable == FALSE)
+			break;
 		prUsbReq = glUsbDequeueReq(prHifInfo, &prHifInfo->rRxDataFreeQ, &prHifInfo->rRxDataQLock);
 		if (prUsbReq == NULL)
 			return WLAN_STATUS_RESOURCES;
@@ -1247,6 +1218,8 @@ void halEnableInterrupt(IN struct ADAPTER *prAdapter)
 	prGlueInfo = prAdapter->prGlueInfo;
 	prHifInfo = &prGlueInfo->rHifInfo;
 
+	prAdapter->fgIsIntEnable = TRUE;
+
 	halRxUSBReceiveData(prAdapter);
 	if (prHifInfo->eEventEpType != EVENT_EP_TYPE_DATA_EP)
 		halRxUSBReceiveEvent(prAdapter, TRUE);
@@ -1272,11 +1245,12 @@ void halDisableInterrupt(IN struct ADAPTER *prAdapter)
 	prGlueInfo = prAdapter->prGlueInfo;
 	prHifInfo = &prGlueInfo->rHifInfo;
 
+	prAdapter->fgIsIntEnable = FALSE;
+
 	usb_kill_anchored_urbs(&prHifInfo->rRxDataAnchor);
 	usb_kill_anchored_urbs(&prHifInfo->rRxEventAnchor);
 
 	glUdmaRxAggEnable(prGlueInfo, FALSE);
-	prAdapter->fgIsIntEnable = FALSE;
 }
 
 /*----------------------------------------------------------------------------*/
@@ -1372,6 +1346,37 @@ void halDevInit(IN struct ADAPTER *prAdapter)
 
 	glUdmaRxAggEnable(prGlueInfo, FALSE);
 	glUdmaTxRxEnable(prGlueInfo, TRUE);
+
+	asicUsbDmaShdlInit(prAdapter);
+	asicUdmaTxTimeoutEnable(prAdapter);
+	asicUdmaRxFlush(prAdapter, FALSE);
+	asicPdmaHifReset(prAdapter, TRUE);
+}
+u_int32_t halTxGetFreeCmdCnt(IN struct ADAPTER *prAdapter)
+{
+	struct GLUE_INFO *prGlueInfo;
+	struct GL_HIF_INFO *prHifInfo;
+	struct USB_REQ *prUsbReq, *prNext;
+	unsigned long flags;
+	u_int16_t u2Cnt = 0;
+
+	if (prAdapter == NULL) {
+		DBGLOG(HAL, ERROR, "prAdapter is NULL error\n");
+		return 0;
+	}
+	prGlueInfo = prAdapter->prGlueInfo;
+	prHifInfo = &prGlueInfo->rHifInfo;
+	if (prHifInfo == NULL) {
+		DBGLOG(HAL, ERROR, "prHifInfo is NULL error\n");
+		return 0;
+	}
+
+	spin_lock_irqsave(&prHifInfo->rTxCmdQLock, flags);
+	list_for_each_entry_safe(prUsbReq,
+			prNext, &prHifInfo->rTxCmdFreeQ, list)
+		u2Cnt++;
+	spin_unlock_irqrestore(&prHifInfo->rTxCmdQLock, flags);
+	return u2Cnt;
 }
 
 u_int8_t halTxIsDataBufEnough(IN struct ADAPTER *prAdapter, IN struct MSDU_INFO *prMsduInfo)
@@ -1839,7 +1844,17 @@ uint32_t halHifPowerOffWifi(IN struct ADAPTER *prAdapter)
 
 void halPrintHifDbgInfo(IN struct ADAPTER *prAdapter)
 {
+	struct CHIP_DBG_OPS *prDbgOps;
 
+	prDbgOps = prAdapter->chip_info->prDebugOps;
+
+	if (prAdapter->u4HifDbgFlag & (DEG_HIF_ALL | DEG_HIF_PSE))
+		prDbgOps->showPseInfo(prAdapter);
+
+	if (prAdapter->u4HifDbgFlag & (DEG_HIF_ALL | DEG_HIF_PLE))
+		prDbgOps->showPleInfo(prAdapter);
+
+	prAdapter->u4HifDbgFlag = 0;
 }
 
 u_int8_t halIsTxResourceControlEn(IN struct ADAPTER *prAdapter)

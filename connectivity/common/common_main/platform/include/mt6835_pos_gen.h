@@ -50,6 +50,10 @@ void consys_wifi_ctrl_switch_conn_mode_mt6835_gen(void);
 #define CONSYS_GEN_IOCFG_RT_BASE_ADDR                                     0x11EC0000
 #define CONSYS_GEN_DRV_CFG0_SET_OFFSET_ADDR                               0x4
 #define CONSYS_GEN_DRV_CFG1_SET_OFFSET_ADDR                               0x14
+#define CONSYS_GEN_PU_SET_OFFSET_ADDR                                     0x74
+#define CONSYS_GEN_PU_CLR_OFFSET_ADDR                                     0x78
+#define CONSYS_GEN_PD_SET_OFFSET_ADDR                                     0x64
+#define CONSYS_GEN_PD_CLR_OFFSET_ADDR                                     0x68
 
 /**********************************************************************************/
 /* Base: conn_reg.ap_rgu_base (0x1C00_7000)                                       */

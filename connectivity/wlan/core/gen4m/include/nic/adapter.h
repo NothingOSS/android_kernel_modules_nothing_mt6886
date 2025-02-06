@@ -2474,6 +2474,7 @@ struct ADAPTER {
 	struct QUE rFlushRxBaEntry; /* wait for BA Delete flush by NAPI */
 
 	uint32_t u4LongestPending; /* longest pending token in seconds */
+	u_int8_t fgRstByDrvOwn;
 };				/* end of _ADAPTER_T */
 
 /*******************************************************************************

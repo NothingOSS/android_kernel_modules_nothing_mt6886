@@ -11057,8 +11057,8 @@ int priv_driver_get_linkspeed(struct net_device *prNetDev,
 		return -EFAULT;
 
 	kalMemSet(&rLinkSpeed, 0, sizeof(rLinkSpeed));
-	DBGLOG(REQ, TRACE, "Glue=%p, &rLinkSpeed=%p, sizeof=%zu, &u4BufLen=%p",
-		prGlueInfo, &rLinkSpeed, sizeof(rLinkSpeed), &u4BufLen);
+	DBGLOG(REQ, TRACE, "&rLinkSpeed=%p, sizeof=%zu, &u4BufLen=%p",
+		&rLinkSpeed, sizeof(rLinkSpeed), &u4BufLen);
 	rStatus = kalIoctl(prGlueInfo, wlanoidQueryLinkSpeed,
 			   &rLinkSpeed, sizeof(rLinkSpeed), &u4BufLen);
 	DBGLOG(REQ, TRACE, "kalIoctlByBssIdx()=%u, prGlueInfo=%p, u4BufLen=%u",

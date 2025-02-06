@@ -137,7 +137,7 @@ int kbase_context_common_init(struct kbase_context *kctx)
 
 	mutex_init(&kctx->coherenct_region_lock);
 	kctx->coherenct_regions =
-		kmalloc(DEFAULT_COHERENT_REGION_SIZE * sizeof(struct kbase_va_region *), GFP_KERNEL);
+		vmalloc(DEFAULT_COHERENT_REGION_SIZE * sizeof(struct kbase_va_region *));
 	kctx->coherent_region_nr = DEFAULT_COHERENT_REGION_SIZE;
 	if (!kctx->coherenct_regions)
 		return -ENOMEM;
@@ -324,11 +324,14 @@ void kbase_context_common_term(struct kbase_context *kctx)
 #if IS_ENABLED(CONFIG_MALI_MTK_ACP_SVP_WA)
 	int i;
 
+	mutex_lock(&kctx->coherenct_region_lock);
 	for (i = 0; i < kctx->coherent_region_nr; i++)
 		kctx->coherenct_regions[i] = NULL;
-	kfree(kctx->coherenct_regions);
+	vfree(kctx->coherenct_regions);
 	dev_vdbg(kctx->kbdev->dev, "%s: %d free coherent list: %u!\n", __func__,
 		kctx->tgid, kctx->coherent_region_nr);
+	mutex_unlock(&kctx->coherenct_region_lock);
+
 	mutex_destroy(&kctx->coherenct_region_lock);
 #endif
 

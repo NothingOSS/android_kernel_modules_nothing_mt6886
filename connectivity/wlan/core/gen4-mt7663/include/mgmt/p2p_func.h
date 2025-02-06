@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+/* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 #ifndef _P2P_FUNC_H
 #define _P2P_FUNC_H
 
@@ -64,6 +18,10 @@ enum _ENUM_DFS_STATE_T {
 	DFS_STATE_DETECTED,
 	DFS_STATE_NUM
 };
+#endif
+
+#if (CFG_SUPPORT_DFS_OFFLOAD == 1)
+#define DFS_OFFLOAD_CAC_TIME_MS                             60000
 #endif
 
 /******************************************************************************
@@ -218,6 +176,10 @@ uint8_t *p2pFuncShowDfsState(void);
 void p2pFuncRecordCacStartBootTime(void);
 
 uint32_t p2pFuncGetCacRemainingTime(void);
+#if CFG_SUPPORT_P2P_CSA
+void p2pFuncGcSwitchCh(IN struct ADAPTER *prAdapter,
+		IN struct P2P_ROLE_FSM_INFO *prP2pRoleFsmInfo);
+#endif
 #endif
 
 void p2pFuncSetChannel(IN struct ADAPTER *prAdapter,
@@ -440,4 +402,33 @@ void p2pFunIndicateAcsResult(IN struct GLUE_INFO *prGlueInfo,
 		IN struct P2P_ACS_REQ_INFO *prAcsReqInfo);
 
 void p2pFunCalAcsChnScores(IN struct ADAPTER *prAdapter);
+
+#if (CFG_SUPPORT_P2PGO_ACS == 1)
+void p2pFunGetAcsBestChList(IN struct ADAPTER *prAdapter,
+		IN uint8_t eBand,
+		IN enum ENUM_MAX_BANDWIDTH_SETTING eChnlBw,
+		IN uint32_t u4LteSafeChnMask_2G,
+		IN uint32_t u4LteSafeChnMask_5G_1,
+		IN uint32_t u4LteSafeChnMask_5G_2,
+		OUT uint8_t *pucSortChannelNumber,
+		OUT struct RF_CHANNEL_INFO *paucSortChannelList);
+#endif
+#endif
+
+#if (CFG_SUPPORT_DFS_OFFLOAD == 1)
+void
+p2pFuncReadyStartAp(IN struct ADAPTER *prAdapter,
+		IN struct P2P_ROLE_FSM_INFO *prP2pRoleFsmInfo);
+
+uint8_t
+p2pFuncSelect5GNonDFSChannel(IN struct ADAPTER *prAdapter,
+		IN struct P2P_ROLE_FSM_INFO *prP2pRoleFsmInfo);
+
+void
+p2pFuncSwitchChannel(IN struct ADAPTER *prAdapter,
+		IN uint8_t ch_num, IN uint8_t ucRoleIdx);
+
+void
+p2pFuncUpdateChannel(IN struct ADAPTER *prAdapter,
+		IN uint8_t ch_num, IN uint8_t ucRoleIdx);
 #endif

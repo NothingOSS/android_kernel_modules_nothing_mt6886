@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /******************************************************************************
  *[File]             pcie.c
  *[Version]          v1.0
@@ -315,9 +269,10 @@ static void mtk_pci_remove(struct pci_dev *pdev)
 #if CFG_SUPPORT_PCIE_L2
 
 
-static int mtk_pci_polling_cr(struct GLUE_INFO *prGlueInfo, uint32_t reg_cr,
-	int bitStart, int bitEnd, uint32_t expected_val){
-	uint32_t reg_32, temResult = 0;
+static uint8_t mtk_pci_polling_cr(struct GLUE_INFO *prGlueInfo, uint32_t reg_cr,
+	int bitStart, int bitEnd, uint32_t expected_val)
+{
+	uint32_t reg_32 = 0, temResult = 0;
 	int i = 0;
 
 	if (bitStart == bitEnd)
@@ -333,12 +288,12 @@ static int mtk_pci_polling_cr(struct GLUE_INFO *prGlueInfo, uint32_t reg_cr,
 		}
 		if (i == 100) {
 			DBGLOG(INIT, STATE, "Polling CR Timeout %x!\n", reg_32);
-			return -1;
+			return FALSE;
 		}
 		i++;
 		kalMsleep(1);
 	}
-	return 0;
+	return TRUE;
 }
 
 #endif
@@ -348,10 +303,10 @@ static int mtk_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 
 	struct GLUE_INFO *prGlueInfo =
 	(struct GLUE_INFO *)pci_get_drvdata(pdev);
-	uint32_t reg_32;
+	uint32_t reg_32 = 0;
 	uint8_t count = 0;
 	int ret = 0, wait = 0;
-	uint8_t checkResult;
+	uint8_t checkResult = FALSE;
 	struct BUS_INFO *prBusInfo;
 	uint8_t drv_own_fail = FALSE;
 
@@ -387,20 +342,20 @@ static int mtk_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 		/*2. Polling UMAC,PDMA TX relative RING*/
 		checkResult = mtk_pci_polling_cr(prGlueInfo,
 		CONN_HIF_PDMA_CSR_PDMA_BUSY_STATUS_ADDR, 2, 2, 0);
-		if (checkResult == -1) {
+		if (checkResult == FALSE) {
 			DBGLOG(HAL, ERROR, "Polling TX Fail ST1\n");
 			ret = -EFAULT;
 		}
 		checkResult = mtk_pci_polling_cr(prGlueInfo,
 			WF_PLE_TOP_HIF_PG_INFO_ADDR, 16, 27, 0);
-		if (checkResult == -1) {
+		if (checkResult == FALSE) {
 			DBGLOG(HAL, ERROR, "Polling TX Fail ST2\n");
 			ret = -EFAULT;
 		}
 
 		checkResult = mtk_pci_polling_cr(prGlueInfo,
 			WF_PSE_TOP_PG_PLE_ADDR, 16, 27, 0);
-		if (checkResult == -1) {
+		if (checkResult == FALSE) {
 			DBGLOG(HAL, ERROR, "Polling TX Fail ST3\n");
 			ret = -EFAULT;
 		}
@@ -408,7 +363,7 @@ static int mtk_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 
 		checkResult = mtk_pci_polling_cr(prGlueInfo,
 			CONN_HIF_PDMA_CSR_PDMA_BUSY_STATUS_ADDR, 31, 31, 0);
-		if (checkResult == -1) {
+		if (checkResult == FALSE) {
 			DBGLOG(HAL, ERROR, "Polling RX Fail ST2\n");
 			ret = -EFAULT;
 		}
@@ -422,7 +377,7 @@ static int mtk_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 
 		checkResult = mtk_pci_polling_cr(prGlueInfo,
 			CONN_HIF_PDMA_CSR_PDMA_SLP_PROT_ADDR, 16, 16, 1);
-		if (checkResult == -1) {
+		if (checkResult == FALSE) {
 			DBGLOG(HAL, ERROR, "Polling SL PROT FAIL\n");
 			ret = -EFAULT;
 		}

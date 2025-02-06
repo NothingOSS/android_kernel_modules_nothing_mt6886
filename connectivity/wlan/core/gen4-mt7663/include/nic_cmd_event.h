@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+/* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: //Department/DaVinci/BRANCHES/
  *      MT6620_WIFI_DRIVER_V2_3/include/nic_cmd_event.h#1
@@ -579,8 +533,15 @@ enum ENUM_CMD_ID {
 
 	CMD_ID_TMR_ACTION = 0x92,
 
+#if (CFG_SUPPORT_TSF_SYNC == 1)
+	CMD_ID_BEACON_TSF_SYNC = 0x94,		/* 0x94 (Set / Query) */
+#endif
+
 	CMD_ID_WFC_KEEP_ALIVE = 0xA0,	/* 0xa0(Set) */
 	CMD_ID_RSSI_MONITOR = 0xA1,	/* 0xa1(Set) */
+#if (CFG_SUPPORT_PKT_OFLD == 1)
+	CMD_ID_PKT_OFLD = 0xA2,		/* 0xA2 (Set) */
+#endif /* CFG_SUPPORT_PKT_OFLD */
 
 #if CFG_SUPPORT_CAL_RESULT_BACKUP_TO_HOST
 	CMD_ID_CAL_BACKUP_IN_HOST_V2 = 0xAE,	/* 0xAE (Set / Query) */
@@ -687,6 +648,8 @@ enum ENUM_EVENT_ID {
 	EVENT_ID_GET_CHIPID,	/* 0x42 (Query - CMD_ID_GET_CHIPID) */
 	EVENT_ID_SLT_STATUS,	/* 0x43 (Query - CMD_ID_SET_SLTINFO) */
 	EVENT_ID_CHIP_CONFIG,	/* 0x44 (Query - CMD_ID_CHIP_CONFIG) */
+	/* 0x4E (Query CMD_ID_SET_MDNS_RECORD ) */
+	EVENT_ID_MDNS_RECORD = 0x4e,
 
 #if CFG_SUPPORT_QA_TOOL
 	/* 0x45 (Query - CMD_ID_ACCESS_RX_STAT) */
@@ -724,7 +687,14 @@ enum ENUM_EVENT_ID {
 
 	EVENT_ID_TM_REPORT = 0x92,
 
+#if (CFG_SUPPORT_TSF_SYNC == 1)
+	EVENT_ID_BEACON_TSF_SYNC = 0x94,	/* 0x94 (Set / Query) */
+#endif
+
 	EVENT_ID_RSSI_MONITOR = 0xA1,
+#if (CFG_SUPPORT_PKT_OFLD == 1)
+	EVENT_ID_PKT_OFLD = 0xA2,
+#endif /* CFG_SUPPORT_PKT_OFLD */
 
 #if CFG_SUPPORT_CAL_RESULT_BACKUP_TO_HOST
 	/* 0xAE (Query - CMD_ID_CAL_BACKUP) */
@@ -779,7 +749,8 @@ enum ENUM_EVENT_ID {
 #define WOWLAN_DETECT_TYPE_DISCONNECT          BIT(2)
 #define WOWLAN_DETECT_TYPE_GTK_REKEY_FAILURE  BIT(3)
 #define WOWLAN_DETECT_TYPE_BCN_LOST            BIT(4)
-#define WOWLAN_DETECT_TYPE_PNO_MATCH_SSID      BIT(5)
+#define WOWLAN_DETECT_TYPE_WIFI_FFS            BIT(5)
+#define WOWLAN_DETECT_TYPE_PNO_MATCH_SSID      BIT(6)
 
 
 /* Wakeup command bit define */
@@ -4097,6 +4068,20 @@ struct EVENT_UPDATE_COEX_PHYRATE {
 	uint8_t aucReserved2[2];    /* 4 byte alignment */
 };
 
+#if (CFG_SUPPORT_PKT_OFLD == 1)
+struct CMD_OFLD_INFO {
+	/* restrict buffer size to 1500 bytes */
+	/* because FW WFDMA MAX buf size is 1600 Byte */
+	uint8_t ucType;
+	uint8_t ucOp;
+	uint8_t ucFragNum;
+	uint8_t ucFragSeq;
+	uint32_t u4TotalLen;
+	uint32_t u4BufLen;
+	uint8_t aucBuf[PKT_OFLD_BUF_SIZE];
+};
+#endif /* CFG_SUPPORT_PKT_OFLD */
+
 struct CMD_GET_TXPWR_TBL {
 	/* DWORD_0 - Common Part */
 	uint8_t  ucCmdVer;
@@ -4358,6 +4343,21 @@ struct CMD_TM_ACTION_T {
 #define TM_CMD_EVENT_VER 0
 #endif
 
+#if (CFG_SUPPORT_TSF_SYNC == 1)
+struct CMD_TSF_SYNC {
+	/* DWORD_0 - Common Part */
+	uint8_t  ucCmdVer;
+	uint8_t  aucPadding0[1];
+	uint16_t u2CmdLen;       /* cmd size including common part and body. */
+
+	/* DWORD_1 ~ x - Command Body */
+	uint64_t u8TsfValue;
+	uint8_t fgIsLatch;
+	uint8_t ucBssIndex;
+	uint8_t aucReserved[2];
+};
+#endif
+
 /*******************************************************************************
  *                            P U B L I C   D A T A
  *******************************************************************************
@@ -4608,6 +4608,13 @@ uint32_t nicCmdEventQueryNicCoexFeature(IN struct ADAPTER
 uint32_t nicCmdEventQueryNicCsumOffload(IN struct ADAPTER
 					*prAdapter, IN uint8_t *pucEventBuf);
 #endif
+
+#if (CFG_SUPPORT_PKT_OFLD == 1)
+void nicCmdEventQueryOfldInfo(IN struct ADAPTER
+				*prAdapter, IN struct CMD_INFO *prCmdInfo,
+				IN uint8_t *pucEventBuf);
+#endif
+
 uint32_t nicCfgChipCapHwVersion(IN struct ADAPTER
 				*prAdapter, IN uint8_t *pucEventBuf);
 uint32_t nicCfgChipCapSwVersion(IN struct ADAPTER
@@ -4692,6 +4699,14 @@ void nicEventDumpMem(IN struct ADAPTER *prAdapter,
 		     IN struct WIFI_EVENT *prEvent);
 void nicEventAssertDump(IN struct ADAPTER *prAdapter,
 			IN struct WIFI_EVENT *prEvent);
+#if CFG_SUPPORT_MDNS_OFFLOAD
+void nicCmdEventQueryMdnsStats(struct ADAPTER *prAdapter,
+	struct CMD_INFO *prCmdInfo,
+	uint8_t *pucEventBuf);
+
+void nicEventMdnsStats(struct ADAPTER *prAdapter,
+	struct WIFI_EVENT *prEvent);
+#endif
 void nicEventHifCtrl(IN struct ADAPTER *prAdapter,
 		     IN struct WIFI_EVENT *prEvent);
 void nicEventRddSendPulse(IN struct ADAPTER *prAdapter,
@@ -4748,6 +4763,11 @@ void nicEventTxMcsInfo(IN struct ADAPTER *prAdapter,
 void nicCmdEventGetTmReport(IN struct ADAPTER *prAdapter,
 	IN struct CMD_INFO *prCmdInfo,
 	IN uint8_t *pucEventBuf);
+#endif
+
+#if (CFG_SUPPORT_TSF_SYNC == 1)
+void nicCmdEventLatchTSF(IN struct ADAPTER *prAdapter,
+	IN struct CMD_INFO *prCmdInfo, IN uint8_t *pucEventBuf);
 #endif
 
 /*******************************************************************************

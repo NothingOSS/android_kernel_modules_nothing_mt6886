@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: @(#) gl_p2p.c@@
  */
@@ -211,6 +165,37 @@ static const struct wiphy_vendor_command mtk_p2p_vendor_ops[] = {
 		VENDOR_OPS_SET_POLICY(VENDOR_CMD_RAW_DATA)
 	},
 #endif /* CFG_SUPPORT_P2P_PREFERRED_FREQ_LIST */
+#if CFG_AUTO_CHANNEL_SEL_SUPPORT
+	{
+		{
+			.vendor_id = OUI_QCA,
+			.subcmd = NL80211_VENDOR_SUBCMD_ACS
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV
+				| WIPHY_VENDOR_CMD_NEED_NETDEV
+				| WIPHY_VENDOR_CMD_NEED_RUNNING,
+		.doit = mtk_cfg80211_vendor_acs
+	},
+#endif
+	{
+		{
+			.vendor_id = OUI_QCA,
+			.subcmd = NL80211_VENDOR_SUBCMD_GET_FEATURES
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV
+				| WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = mtk_cfg80211_vendor_get_features
+	},
+
+};
+
+static const struct nl80211_vendor_cmd_info mtk_p2p_vendor_events[] = {
+#if CFG_AUTO_CHANNEL_SEL_SUPPORT
+	{
+		.vendor_id = OUI_QCA,
+		.subcmd = NL80211_VENDOR_SUBCMD_ACS
+	},
+#endif
 };
 
 #endif
@@ -231,6 +216,13 @@ mtk_cfg80211_default_mgmt_stypes[NUM_NL80211_IFTYPES] = {
 			.tx = 0xffff,
 			.rx = BIT(IEEE80211_STYPE_PROBE_REQ >> 4)
 				| BIT(IEEE80211_STYPE_ACTION >> 4)
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+				| BIT(IEEE80211_STYPE_ASSOC_REQ >> 4) |
+				BIT(IEEE80211_STYPE_REASSOC_REQ >> 4) |
+				BIT(IEEE80211_STYPE_DISASSOC >> 4) |
+				BIT(IEEE80211_STYPE_AUTH >> 4) |
+				BIT(IEEE80211_STYPE_DEAUTH >> 4)
+#endif
 			},
 	[NL80211_IFTYPE_AP_VLAN] = {
 			/* copy AP */
@@ -258,6 +250,7 @@ mtk_cfg80211_default_mgmt_stypes[NUM_NL80211_IFTYPES] = {
 #endif
 #endif
 
+#if 0
 static const struct iw_priv_args rP2PIwPrivTable[] = {
 	{
 	 .cmd = IOC_P2P_CFG_DEVICE,
@@ -334,7 +327,6 @@ static const struct iw_priv_args rP2PIwPrivTable[] = {
 	 .name = "get_oid"}
 };
 
-#if 0
 const struct iw_handler_def mtk_p2p_wext_handler_def = {
 	.num_standard = (__u16) sizeof(rP2PIwStandardHandler)
 					/ sizeof(iw_handler),
@@ -353,9 +345,11 @@ const struct iw_handler_def mtk_p2p_wext_handler_def = {
 #endif
 
 #ifdef CONFIG_PM
+#if KERNEL_VERSION(3, 9, 0) > CFG80211_VERSION_CODE
 static const struct wiphy_wowlan_support mtk_p2p_wowlan_support = {
 	.flags = WIPHY_WOWLAN_DISCONNECT | WIPHY_WOWLAN_ANY,
 };
+#endif
 #endif
 
 static const struct ieee80211_iface_limit mtk_p2p_sta_go_limits[] = {
@@ -473,6 +467,10 @@ static int p2pDoIOCTL(struct net_device *prDev,
 		struct ifreq *prIFReq,
 		int i4Cmd);
 
+#if KERNEL_VERSION(5, 15, 0) <= CFG80211_VERSION_CODE
+static int p2pDoPrivIOCTL(struct net_device *prDev, struct ifreq *prIfReq,
+			void __user *prData, int i4Cmd);
+#endif
 
 /*---------------------------------------------------------------------------*/
 /*!
@@ -512,6 +510,9 @@ const struct net_device_ops p2p_netdev_ops = {
 	.ndo_set_rx_mode = p2pSetMulticastList,
 	.ndo_get_stats = p2pGetStats,
 	.ndo_do_ioctl = p2pDoIOCTL,
+#if KERNEL_VERSION(5, 15, 0) <= CFG80211_VERSION_CODE
+	.ndo_siocdevprivate = p2pDoPrivIOCTL,
+#endif
 	.ndo_start_xmit = p2pHardStartXmit,
 	/* .ndo_select_queue       = p2pSelectQueue, */
 	.ndo_select_queue = wlanSelectQueue,
@@ -753,6 +754,15 @@ u_int8_t p2PFreeInfo(struct GLUE_INFO *prGlueInfo, uint8_t ucIdx)
 	 */
 
 	if (prGlueInfo->prP2PInfo[ucIdx] != NULL) {
+#if (CFG_SUPPORT_DFS_OFFLOAD == 1)
+		if (prGlueInfo->prP2PInfo[ucIdx]->pP2pStartAPMsg != NULL) {
+			cnmMemFree(prAdapter,
+			prGlueInfo->prP2PInfo[ucIdx]->pP2pStartAPMsg);
+			prGlueInfo->prP2PInfo[ucIdx]->pP2pStartAPMsg
+				= NULL;
+		}
+#endif
+
 		kalMemFree(prAdapter->rWifiVar.prP2PConnSettings[ucIdx],
 			VIR_MEM_TYPE,
 			sizeof(struct P2P_CONNECTION_SETTINGS));
@@ -1253,7 +1263,7 @@ u_int8_t glRegisterP2P(struct GLUE_INFO *prGlueInfo, const char *prDevName,
 		rMacAddr[0] |= 0x2;
 		/* change to local administrated address */
 		rMacAddr[0] ^= i << 2;
-		kalMemCopy(prP2pDev->dev_addr, rMacAddr, ETH_ALEN);
+		kal_eth_hw_addr_set(prP2pDev, rMacAddr);
 		kalMemCopy(prP2pDev->perm_addr, prP2pDev->dev_addr, ETH_ALEN);
 
 		if (glSetupP2P(prGlueInfo, prP2pWdev, prP2pDev, i, fgIsApMode)
@@ -1392,6 +1402,8 @@ u_int8_t glP2pCreateWirelessDevice(struct GLUE_INFO *prGlueInfo)
 	prWiphy->vendor_commands = mtk_p2p_vendor_ops;
 	prWiphy->n_vendor_commands = sizeof(mtk_p2p_vendor_ops)
 		/ sizeof(struct wiphy_vendor_command);
+	prWiphy->vendor_events = mtk_p2p_vendor_events;
+	prWiphy->n_vendor_events = ARRAY_SIZE(mtk_p2p_vendor_events);
 #endif
 
 #ifdef CONFIG_PM
@@ -1759,6 +1771,15 @@ void mtk_p2p_wext_set_Multicastlist(struct GLUE_INFO *prGlueInfo)
 		return;
 	}
 
+	KAL_ACQUIRE_MUTEX(prGlueInfo->prAdapter, MUTEX_DEL_INF);
+	if (!kalValidateDevHandler(prGlueInfo, prDev)) {
+		KAL_RELEASE_MUTEX(prGlueInfo->prAdapter, MUTEX_DEL_INF);
+		DBGLOG(INIT, ERROR, "g_P2pPrDev has been unregistered\n");
+		return;
+	}
+	dev_hold(prDev);
+	KAL_RELEASE_MUTEX(prGlueInfo->prAdapter, MUTEX_DEL_INF);
+
 	if (prDev->flags & IFF_PROMISC)
 		prGlueInfo->prP2PDevInfo->u4PacketFilter
 			|= PARAM_PACKET_FILTER_PROMISCUOUS;
@@ -1805,16 +1826,14 @@ void mtk_p2p_wext_set_Multicastlist(struct GLUE_INFO *prGlueInfo)
 
 		netif_addr_unlock_bh(prDev);
 
-		DBGLOG(P2P, TRACE, "SEt Multicast Address List\n");
+		DBGLOG(P2P, TRACE, "Set Multicast Address List\n");
 
-		if (i >= MAX_NUM_GROUP_ADDR)
-			return;
-		wlanoidSetP2PMulticastList(prGlueInfo->prAdapter,
-			&(prGlueInfo->prP2PDevInfo->aucMCAddrList[0]),
-			(i * ETH_ALEN), &u4SetInfoLen);
-
+		if (i < MAX_NUM_GROUP_ADDR)
+			wlanoidSetP2PMulticastList(prGlueInfo->prAdapter,
+				&(prGlueInfo->prP2PDevInfo->aucMCAddrList[0]),
+				(i * ETH_ALEN), &u4SetInfoLen);
 	}
-
+	dev_put(prDev);
 }				/* end of p2pSetMulticastList() */
 
 /*---------------------------------------------------------------------------*/
@@ -2029,6 +2048,13 @@ int p2pDoIOCTL(struct net_device *prDev, struct ifreq *prIfReq, int i4Cmd)
 	return ret;
 }				/* end of p2pDoIOCTL() */
 
+#if KERNEL_VERSION(5, 15, 0) <= CFG80211_VERSION_CODE
+int p2pDoPrivIOCTL(struct net_device *prDev, struct ifreq *prIfReq,
+		void __user *prData, int i4Cmd)
+{
+	return p2pDoIOCTL(prDev, prIfReq, i4Cmd);
+}
+#endif
 
 /*---------------------------------------------------------------------------*/
 /*!
@@ -2100,7 +2126,7 @@ int p2pSetMACAddress(IN struct net_device *prDev, void *addr)
 	sa = (struct sockaddr *)addr;
 
 	COPY_MAC_ADDR(prBssInfo->aucOwnMacAddr, sa->sa_data);
-	COPY_MAC_ADDR(prDev->dev_addr, sa->sa_data);
+	kal_eth_hw_addr_set(prDev, sa->sa_data);
 
 	if ((prP2pInfo->prDevHandler == prDev)
 			&& mtk_IsP2PNetDevice(prGlueInfo, prDev)) {

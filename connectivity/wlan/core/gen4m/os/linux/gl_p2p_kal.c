@@ -1563,6 +1563,8 @@ kalP2PGCIndicateConnectionStatus(struct GLUE_INFO *prGlueInfo,
 	struct GL_P2P_INFO *prGlueP2pInfo = (struct GL_P2P_INFO *) NULL;
 	struct ADAPTER *prAdapter = NULL;
 
+	GLUE_SPIN_LOCK_DECLARATION();
+
 	do {
 		if (prGlueInfo == NULL) {
 			ASSERT(FALSE);
@@ -1574,14 +1576,29 @@ kalP2PGCIndicateConnectionStatus(struct GLUE_INFO *prGlueInfo,
 
 		/* FIXME: This exception occurs at wlanRemove. */
 		if ((prGlueP2pInfo == NULL) ||
-		    (prAdapter->rP2PNetRegState !=
-				ENUM_NET_REG_STATE_REGISTERED) ||
 		    (test_bit(GLUE_FLAG_HALT_BIT, &prGlueInfo->ulFlag) == 1) ||
 		    (prGlueP2pInfo->aprRoleHandler == NULL) ||
 		    (prGlueP2pInfo->aprRoleHandler->reg_state !=
 				NETREG_REGISTERED)) {
 			break;
 		}
+
+		GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
+		if (prAdapter->rP2PNetRegState ==
+			ENUM_NET_REG_STATE_REGISTERED &&
+			prAdapter->rP2PRegState ==
+			ENUM_P2P_REG_STATE_REGISTERED) {
+			prAdapter->rP2PNetRegState =
+				ENUM_NET_REG_STATE_UNREGISTERING;
+		} else {
+			GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
+			DBGLOG(P2P, ERROR,
+				"skip indicate, p2p_state=%d, net_state=%d\n",
+				prAdapter->rP2PRegState,
+				prAdapter->rP2PNetRegState);
+			break;
+		}
+		GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
 
 		if (prP2pConnInfo) {
 			uint8_t aucBssid[MAC_ADDR_LEN];
@@ -1620,6 +1637,9 @@ kalP2PGCIndicateConnectionStatus(struct GLUE_INFO *prGlueInfo,
 				GFP_KERNEL);
 		}
 
+		GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
+		prAdapter->rP2PNetRegState = ENUM_NET_REG_STATE_REGISTERED;
+		GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
 	} while (FALSE);
 
 }				/* kalP2PGCIndicateConnectionStatus */

@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  * Id: //Department/DaVinci/BRANCHES/
  *     MT6620_WIFI_DRIVER_V2_3/nic/nic_cmd_event.c#3
@@ -406,9 +360,6 @@ void nicCmdEventPfmuTagRead(IN struct ADAPTER *prAdapter,
 
 	g_rPfmuTag1 = prPfumTagRead->ru4TxBfPFMUTag1;
 	g_rPfmuTag2 = prPfumTagRead->ru4TxBfPFMUTag2;
-
-	kalOidComplete(prGlueInfo, prCmdInfo->fgSetQuery,
-		       u4QueryInfoLen, WLAN_STATUS_SUCCESS);
 
 	DBGLOG(INIT, INFO,
 	       "========================== (R)Tag1 info ==========================\n");
@@ -1320,6 +1271,60 @@ void nicCmdEventSetStopSchedScan(IN struct ADAPTER
 
 }
 
+#if (CFG_SUPPORT_PKT_OFLD == 1)
+void nicCmdEventQueryOfldInfo(IN struct ADAPTER
+				*prAdapter, IN struct CMD_INFO *prCmdInfo,
+				IN uint8_t *pucEventBuf)
+{
+	uint32_t u4QueryInfoLen;
+	struct GLUE_INFO *prGlueInfo;
+	struct PARAM_OFLD_INFO *prParamOfldInfo;
+	struct CMD_OFLD_INFO *prCmdOfldInfo;
+
+	ASSERT(prAdapter);
+	ASSERT(prCmdInfo);
+	ASSERT(pucEventBuf);
+
+	/* 4 <2> Update information of OID */
+	if (prCmdInfo->fgIsOid) {
+		prGlueInfo = prAdapter->prGlueInfo;
+		prCmdOfldInfo = (struct CMD_OFLD_INFO *) (pucEventBuf);
+
+		u4QueryInfoLen = sizeof(struct
+					PARAM_OFLD_INFO);
+
+		if (prCmdInfo->u4InformationBufferLength < sizeof(
+			    struct PARAM_OFLD_INFO)) {
+			DBGLOG(REQ, INFO,
+			       "Ofld info query length %u is not valid.\n",
+			       prCmdInfo->u4InformationBufferLength);
+		}
+		prParamOfldInfo = (struct PARAM_OFLD_INFO
+				    *) prCmdInfo->pvInformationBuffer;
+		prParamOfldInfo->ucFragNum = prCmdOfldInfo->ucFragNum;
+		prParamOfldInfo->ucFragSeq = prCmdOfldInfo->ucFragSeq;
+		prParamOfldInfo->u4TotalLen = prCmdOfldInfo->u4TotalLen;
+		prParamOfldInfo->u4BufLen = prCmdOfldInfo->u4BufLen;
+
+		if (prCmdOfldInfo->u4TotalLen > 0 &&
+				prCmdOfldInfo->u4BufLen > 0 &&
+				prCmdOfldInfo->u4BufLen <= PKT_OFLD_BUF_SIZE) {
+			kalMemCopy(prParamOfldInfo->aucBuf,
+				prCmdOfldInfo->aucBuf,
+				prCmdOfldInfo->u4BufLen);
+		} else {
+			DBGLOG(REQ, INFO,
+			       "Invalid query result, length: %d Buf size: %d.\n",
+				prCmdOfldInfo->u4TotalLen,
+				prCmdOfldInfo->u4BufLen);
+		}
+		kalOidComplete(prGlueInfo, prCmdInfo->fgSetQuery,
+		   u4QueryInfoLen, WLAN_STATUS_SUCCESS);
+	}
+
+}
+#endif /* CFG_SUPPORT_PKT_OFLD */
+
 /* Statistics responder */
 void nicCmdEventQueryXmitOk(IN struct ADAPTER *prAdapter,
 	IN struct CMD_INFO *prCmdInfo, IN uint8_t *pucEventBuf)
@@ -1724,6 +1729,8 @@ void nicOidCmdTimeoutCommon(IN struct ADAPTER *prAdapter,
 	if (prCmdInfo->fgIsOid)
 		kalOidComplete(prAdapter->prGlueInfo, prCmdInfo->fgSetQuery,
 			       0, WLAN_STATUS_FAILURE);
+	if (prAdapter->fgIsPostponeTxEAPOLM3)
+		prAdapter->fgIsPostponeTxEAPOLM3 = FALSE;
 }
 
 /*----------------------------------------------------------------------------*/
@@ -2588,6 +2595,86 @@ void nicCmdEventQueryMemDump(IN struct ADAPTER *prAdapter,
 	return;
 
 }
+
+#if CFG_SUPPORT_MDNS_OFFLOAD
+void nicCmdEventQueryMdnsStats(struct ADAPTER *prAdapter,
+		struct CMD_INFO *prCmdInfo, uint8_t *pucEventBuf)
+{
+	struct GLUE_INFO *prGlueInfo;
+	uint16_t len;
+
+	if (!prAdapter) {
+		DBGLOG(NIC, ERROR, "NULL prAdapter!\n");
+		return;
+	}
+
+	if (!prCmdInfo) {
+		DBGLOG(NIC, ERROR, "NULL prCmdInfo!\n");
+		return;
+	}
+
+	len = prCmdInfo->u4InformationBufferLength;
+	prGlueInfo = prAdapter->prGlueInfo;
+
+	DBGLOG(NIC, TRACE, "Glue=%p, Pend=%p, Cmd=%p, oid=%u, Buf=%p, len=%u",
+			prGlueInfo, &prGlueInfo->rPendComp, prCmdInfo,
+			prCmdInfo->fgIsOid, prCmdInfo->pvInformationBuffer,
+			len);
+
+	memcpy((uint8_t *)prCmdInfo->pvInformationBuffer, pucEventBuf, len);
+
+	DBGLOG(RX, TRACE, "kalOidComplete: infoLen=%u", len);
+
+	if (prCmdInfo->fgIsOid)
+		kalOidComplete(prGlueInfo, prCmdInfo->fgSetQuery,
+						len, WLAN_STATUS_SUCCESS);
+}
+
+void nicEventMdnsStats(struct ADAPTER *prAdapter,
+		struct WIFI_EVENT *prEvent)
+{
+	struct CMD_INFO *prCmdInfo;
+
+	if (!prAdapter) {
+		DBGLOG(NIC, ERROR, "NULL prAdapter!\n");
+		return;
+	}
+
+	prCmdInfo = nicGetPendingCmdInfo(prAdapter, prEvent->ucSeqNum);
+
+	if (!prCmdInfo) {
+		DBGLOG(NIC, ERROR, "NULL prCmdInfo!\n");
+		return;
+	}
+
+	if (unlikely(prEvent->u2PacketLength - sizeof(struct WIFI_EVENT) >
+					prCmdInfo->u4InformationBufferLength)) {
+		DBGLOG(RX, WARN, "prEventLen=%u-%u, BufLen=%u",
+				prEvent->u2PacketLength,
+				sizeof(struct WIFI_EVENT),
+				prCmdInfo->u4InformationBufferLength);
+		kalOidComplete(prAdapter->prGlueInfo, prCmdInfo->fgSetQuery, 0,
+				WLAN_STATUS_FAILURE);
+	} else if (prCmdInfo->pfCmdDoneHandler) {
+		/* The destination buffer length has been checked sufficient */
+		kalMemZero(prCmdInfo->pvInformationBuffer,
+				prCmdInfo->u4InformationBufferLength);
+		prCmdInfo->u4InformationBufferLength =
+			prEvent->u2PacketLength - sizeof(struct WIFI_EVENT);
+		DBGLOG(RX, TRACE, "Calling prCmdInfo->pfCmdDoneHandler=%ps",
+				prCmdInfo->pfCmdDoneHandler);
+		prCmdInfo->pfCmdDoneHandler(prAdapter, prCmdInfo,
+					    prEvent->aucBuffer);
+	} else if (prCmdInfo->fgIsOid)
+		kalOidComplete(prAdapter->prGlueInfo,
+			prCmdInfo->fgSetQuery,
+			prEvent->u2PacketLength - sizeof(struct WIFI_EVENT),
+			WLAN_STATUS_SUCCESS);
+
+	/* return prCmdInfo */
+	cmdBufFreeCmdInfo(prAdapter, prCmdInfo);
+}
+#endif
 
 #if CFG_SUPPORT_BATCH_SCAN
 /*----------------------------------------------------------------------------*/
@@ -4100,12 +4187,20 @@ void nicExtEventReCalData(IN struct ADAPTER *prAdapter, IN uint8_t *pucEventBuf)
 	struct RECAL_DATA_T *prCalArray = NULL;
 	uint32_t u4Idx = 0;
 
-	ASSERT(pucEventBuf);
-	ASSERT(prAdapter);
+	if (pucEventBuf == NULL) {
+		DBGLOG(RFTEST, ERROR, "pucEventBuf is NULL\n");
+		return;
+	}
+	if (prAdapter == NULL) {
+		DBGLOG(RFTEST, ERROR, "prAdapter is NULL\n");
+		return;
+	}
+
 	prReCalInfo = &prAdapter->rReCalInfo;
 	if (prReCalInfo->prCalArray == NULL) {
 		prCalArray = (struct RECAL_DATA_T *)kalMemAlloc(
-			  2048 * sizeof(struct RECAL_DATA_T), VIR_MEM_TYPE);
+				CAL_ARRAY_SIZE * sizeof(struct RECAL_DATA_T),
+				VIR_MEM_TYPE);
 
 		if (prCalArray == NULL) {
 			DBGLOG(RFTEST, ERROR,
@@ -4115,7 +4210,7 @@ void nicExtEventReCalData(IN struct ADAPTER *prAdapter, IN uint8_t *pucEventBuf)
 		prReCalInfo->prCalArray = prCalArray;
 	}
 
-	if (prReCalInfo->u4Count >= 2048) {
+	if (prReCalInfo->u4Count >= CAL_ARRAY_SIZE) {
 		DBGLOG(RFTEST, ERROR,
 			"Too many Recal packet, maximum packets will be 2048, ignore\n");
 		return;
@@ -5200,6 +5295,11 @@ void nicEventAddPkeyDone(IN struct ADAPTER *prAdapter,
 	}
 
 	prAdapter->fgIsAddKeyDone = TRUE;
+
+	if (prAdapter->fgIsPostponeTxEAPOLM3) {
+		prAdapter->fgIsPostponeTxEAPOLM3 = FALSE;
+		DBGLOG(RX, INFO, "[Passpoint] PTK is installed and ready!\n");
+	}
 }
 
 void nicEventIcapDone(IN struct ADAPTER *prAdapter,
@@ -5655,6 +5755,8 @@ void nicOidCmdTimeoutSetAddKey(IN struct ADAPTER *prAdapter,
 	if (prCmdInfo->fgIsOid)
 		kalOidComplete(prAdapter->prGlueInfo, prCmdInfo->fgSetQuery,
 			       0, WLAN_STATUS_FAILURE);
+	if (prAdapter->fgIsPostponeTxEAPOLM3)
+		prAdapter->fgIsPostponeTxEAPOLM3 = FALSE;
 }
 #endif
 
@@ -6369,3 +6471,42 @@ void nicCmdEventGetTmReport(
 					u4QueryInfoLen, WLAN_STATUS_SUCCESS);
 }
 #endif
+
+#if (CFG_SUPPORT_TSF_SYNC == 1)
+void nicCmdEventLatchTSF(IN struct ADAPTER *prAdapter,
+	IN struct CMD_INFO *prCmdInfo, IN uint8_t *pucEventBuf)
+{
+	uint32_t u4QueryInfoLen;
+	struct GLUE_INFO *prGlueInfo;
+
+	if (!prAdapter) {
+		DBGLOG(NIC, ERROR, "NULL prAdapter!\n");
+		return;
+	}
+
+	if (!prCmdInfo) {
+		DBGLOG(NIC, ERROR, "NULL prCmdInfo!\n");
+		return;
+	}
+
+	if (!pucEventBuf) {
+		DBGLOG(NIC, ERROR, "NULL pucEventBuf!\n");
+		return;
+	}
+
+	if (prCmdInfo->fgIsOid) {
+		prGlueInfo = prAdapter->prGlueInfo;
+
+		kalMemCopy(prCmdInfo->pvInformationBuffer,
+			pucEventBuf, sizeof(struct CMD_TSF_SYNC));
+		u4QueryInfoLen = sizeof(struct CMD_TSF_SYNC);
+
+		kalOidComplete(prGlueInfo, prCmdInfo->fgSetQuery,
+			       u4QueryInfoLen, WLAN_STATUS_SUCCESS);
+	}
+
+	return;
+
+}
+#endif
+

@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+/* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*! \file   "mac.h"
  *  \brief  Brief description.
  *
@@ -319,6 +273,11 @@
 /* 7.3.2.14 BSS membership selector */
 /* BSS Selector - Hash to Element only */
 #define RATE_H2E_ONLY                           123
+
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+#define RATE_H2E_ONLY_VAL                       (0x80 | 123)
+#endif
+
 /* BSS Selector - Clause 22. HT PHY */
 #define RATE_VHT_PHY                            126
 /* BSS Selector - Clause 20. HT PHY */
@@ -1065,7 +1024,14 @@
 	199	/* Operation Mode Notification */
 #define ELEM_ID_RESERVED \
 	255	/* Reserved */
-
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+#define ELEM_ID_RSNX \
+	244
+#endif
+#if (CFG_SUPPORT_SOFTAP_OWE == 1)
+#define ELEM_EXT_ID_DIFFIE_HELLMAN_PARAM \
+	32 /* OWE: Diffie-Hellman Parameter */
+#endif
 /* 7.3.2.1 SSID element */
 #define ELEM_MAX_LEN_SSID                           32
 
@@ -1342,6 +1308,10 @@
 #define VHT_OP_MODE_CHANNEL_WIDTH                   BITS(0, 1)
 #define VHT_OP_MODE_RX_NSS                          BITS(4, 6)
 #define VHT_OP_MODE_RX_NSS_TYPE                     BIT(7)
+
+#define VHT_OP_MODE_NSS_1	0x00
+#define VHT_OP_MODE_NSS_2	0x01
+
 
 #define VHT_OP_MODE_CHANNEL_WIDTH_OFFSET                   0
 #define VHT_OP_MODE_RX_NSS_OFFSET                   4
@@ -1658,6 +1628,9 @@
 #define VENDOR_OUI_TYPE_WPS                         4
 #define VENDOR_OUI_TYPE_P2P                         9
 #define VENDOR_OUI_TYPE_WFD                         10
+#if (CFG_SUPPORT_SOFTAP_OWE == 1)
+#define VENDOR_OUI_TYPE_OWE                         28
+#endif
 
 #if CFG_SUPPORT_PASSPOINT
 #define VENDOR_OUI_TYPE_HS20                        16
@@ -3354,6 +3327,8 @@ struct SUB_IE_WIDE_BW_CH_SWITCH {
 #define MTK_OUI_IE(fp)          ((struct IE_MTK_OUI *) fp)
 
 #define CSA_IE(fp)              ((struct IE_CHANNEL_SWITCH *) fp)
+#define SEC_OFFSET_IE(fp)       ((struct IE_SECONDARY_OFFSET *) fp)
+#define WIDE_BW_IE(fp)          ((struct IE_WIDE_BAND_CHANNEL *) fp)
 
 #define SUPPORTED_CHANNELS_IE(fp) ((struct IE_SUPPORTED_CHANNELS *)fp)
 #define TIMEOUT_INTERVAL_IE(fp)	((struct IE_TIMEOUT_INTERVAL *)fp)

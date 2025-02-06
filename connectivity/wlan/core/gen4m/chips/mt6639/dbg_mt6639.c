@@ -1086,6 +1086,11 @@ bool mt6639_CheckDumpViaBt(void)
 {
 	return (fgIsBusAccessFailed || fgIsMcuOff) && fgTriggerDebugSop;
 }
+
+bool mt6639_CheckIsMcuOff(void)
+{
+	return fgIsMcuOff;
+}
 #endif
 void mt6639_dumpCbtopReg(struct ADAPTER *ad)
 {

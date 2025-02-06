@@ -80,10 +80,6 @@ struct APPEND_VAR_IE_ENTRY txProbeRspIETable[] = {
 			rlmRspGenerateObssScanIE}	/* 74 */
 	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_EXT_CAP), NULL,
 			rlmRspGenerateExtCapIE}	/* 127 */
-	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_WPA), NULL,
-			rsnGenerateWpaNoneIE}	/* 221 */
-	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_WMM_PARAM), NULL,
-			mqmGenerateWmmParamIE}	/* 221 */
 #if CFG_SUPPORT_802_11AC
 	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_VHT_CAP), NULL,
 			rlmRspGenerateVhtCapIE}	/*191 */
@@ -105,23 +101,28 @@ struct APPEND_VAR_IE_ENTRY txProbeRspIETable[] = {
 	, {0, ehtRlmCalculateCapIELen, ehtRlmRspGenerateCapIE}
 	, {0, ehtRlmCalculateOpIELen, ehtRlmRspGenerateOpIE}
 #endif
+	/* contiguous vendor ie will be treat as one ie when sorting */
+	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_WPA), NULL,
+			rsnGenerateWpaNoneIE}	/* 221 */
+	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_WMM_PARAM), NULL,
+			mqmGenerateWmmParamIE}	/* 221 */
 #if CFG_SUPPORT_MTK_SYNERGY
-	, {0, rlmCalculateMTKOuiIELen, rlmGenerateMTKOuiIE}
+	, {0, rlmCalculateMTKOuiIELen, rlmGenerateMTKOuiIE} /* 221 */
 #endif
 	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_WPA), NULL,
 			rsnGenerateWPAIE}	/* 221 */
+	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_WPA), NULL,
+	   rsnGenerateOWEIE} /* 221 */
+	, {0, p2pCalculateWSCIELen, p2pGenerateWSCIE} /* 221 */
+#if CFG_SUPPORT_WFD
+	, {0, p2pCalculateWFDIELen, p2pGenerateWFDIE} /* 221 */
+#endif
+	, {0, p2pCalculateP2PIELen, p2pGenerateP2PIE} /* 221 */
+#if CFG_SUPPORT_CUSTOM_VENDOR_IE
+	, {0, p2pCalculateVendorIELen, p2pGenerateVendorIE} /* 221 */
+#endif
 	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_RSN), NULL,
 			rsnGenerateRSNXIE}	/* 244 */
-	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_WPA), NULL,
-	   rsnGenerateOWEIE}
-	, {0, p2pCalculateWSCIELen, p2pGenerateWSCIE}
-#if CFG_SUPPORT_WFD
-	, {0, p2pCalculateWFDIELen, p2pGenerateWFDIE}
-#endif
-	, {0, p2pCalculateP2PIELen, p2pGenerateP2PIE}
-#if CFG_SUPPORT_CUSTOM_VENDOR_IE
-	, {0, p2pCalculateVendorIELen, p2pGenerateVendorIE}
-#endif
 };
 
 #if (CFG_SUPPORT_DFS_MASTER == 1)

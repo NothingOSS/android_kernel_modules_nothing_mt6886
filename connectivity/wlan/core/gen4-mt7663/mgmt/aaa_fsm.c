@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/mgmt/aaa_fsm.c#3 $
  */
@@ -313,9 +267,15 @@ void aaaFsmRunEventRxAuth(IN struct ADAPTER *prAdapter,
 		prAuthFrame = (struct WLAN_AUTH_FRAME *) prSwRfb->pvHeader;
 
 		DBGLOG(AAA, INFO,
-			"SA: " MACSTR ", bssid: " MACSTR ", sta idx: %d\n",
+			"SA: " MACSTR ", bssid: " MACSTR ", %d %d sta: %d\n",
 			MAC2STR(prAuthFrame->aucSrcAddr),
 			MAC2STR(prAuthFrame->aucBSSID),
+#if CFG_SUPPORT_CFG80211_AUTH
+			prAuthFrame->aucAuthData[0],
+#else
+			prAuthFrame->u2AuthTransSeqNo,
+#endif
+			prAuthFrame->u2AuthAlgNum,
 			prSwRfb->ucStaRecIdx);
 
 #if CFG_ENABLE_WIFI_DIRECT
@@ -335,6 +295,17 @@ void aaaFsmRunEventRxAuth(IN struct ADAPTER *prAdapter,
 			/* 4 <1.1> Validate Auth Frame
 			 * by Auth Algorithm/Transation Seq
 			 */
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+			if (WLAN_STATUS_SUCCESS ==
+				authProcessRxAuthFrame(prAdapter,
+					prSwRfb,
+					prBssInfo,
+					&u2StatusCode)) {
+				if ((u2StatusCode
+					== STATUS_CODE_SUCCESSFUL) ||
+					(u2StatusCode
+					== WLAN_STATUS_SAE_HASH_TO_ELEMENT)) {
+#else
 			if (WLAN_STATUS_SUCCESS ==
 				authProcessRxAuth1Frame(prAdapter,
 					prSwRfb,
@@ -342,8 +313,8 @@ void aaaFsmRunEventRxAuth(IN struct ADAPTER *prAdapter,
 					AUTH_ALGORITHM_NUM_OPEN_SYSTEM,
 					AUTH_TRANSACTION_SEQ_1,
 					&u2StatusCode)) {
-
 				if (u2StatusCode == STATUS_CODE_SUCCESSFUL) {
+#endif
 					DBGLOG(AAA, TRACE,
 						"process RxAuth status success\n");
 					/* 4 <1.2> Validate Auth Frame
@@ -357,6 +328,16 @@ void aaaFsmRunEventRxAuth(IN struct ADAPTER *prAdapter,
 						&u2StatusCode);
 
 #if CFG_SUPPORT_802_11W
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+					if (prBssInfo->u4RsnSelectedAKMSuite ==
+							RSN_AKM_SUITE_SAE)
+						break;
+#endif
+#if CFG_SUPPORT_SOFTAP_OWE
+					if (prBssInfo->u4RsnSelectedAKMSuite ==
+						RSN_AKM_SUITE_OWE)
+						break;
+#endif
 					/* AP PMF, if PMF connection,
 					 * ignore Rx auth
 					 */
@@ -449,8 +430,14 @@ bow_proc:
 	if (fgReplyAuth) {
 
 		if (prStaRec) {
-
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+			if ((u2StatusCode
+				== STATUS_CODE_SUCCESSFUL) ||
+				(u2StatusCode
+				== WLAN_STATUS_SAE_HASH_TO_ELEMENT)) {
+#else
 			if (u2StatusCode == STATUS_CODE_SUCCESSFUL) {
+#endif
 				if (prStaRec->eAuthAssocState
 					!= AA_STATE_IDLE) {
 
@@ -459,10 +446,11 @@ bow_proc:
 						prStaRec->eAuthAssocState);
 				}
 
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 0)
 				if (prStaRec->eAuthAssocState
 					== AAA_STATE_SEND_AUTH2)
 					return;
-
+#endif
 				prStaRec->eAuthAssocState =
 					AAA_STATE_SEND_AUTH2;
 			} else {
@@ -478,8 +466,11 @@ bow_proc:
 
 			/* Update Station Record - Status/Reason Code */
 			prStaRec->u2StatusCode = u2StatusCode;
-
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+			prStaRec->ucAuthAlgNum = prAuthFrame->u2AuthAlgNum;
+#else
 			prStaRec->ucAuthAlgNum = AUTH_ALGORITHM_NUM_OPEN_SYSTEM;
+#endif
 		} else {
 			/* NOTE(Kevin): We should have STA_RECORD_T
 			 * if the status code was successful
@@ -487,6 +478,49 @@ bow_proc:
 			ASSERT(!(u2StatusCode == STATUS_CODE_SUCCESSFUL));
 		}
 
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+		if (prBssInfo->u4RsnSelectedAKMSuite ==
+			RSN_AKM_SUITE_SAE) {
+			kalP2PIndicateRxMgmtFrame(prAdapter->prGlueInfo,
+				prSwRfb,
+				FALSE,
+				(uint8_t)prBssInfo->u4PrivateData);
+			DBGLOG(AAA, INFO, "Forward RxAuth\n");
+			if (prStaRec && prStaRec->fgIsInUse &&
+				p2pFuncIsAPMode(prAdapter->rWifiVar.
+				prP2PConnSettings[prBssInfo->u4PrivateData])) {
+				/* only check in SAP */
+				cnmTimerStopTimer(prAdapter,
+					&prStaRec->rTxReqDoneOrRxRespTimer);
+				/*ToDo:Init Timer to check get
+				 * Auth Txdone avoid sta_rec not clear
+				 */
+				cnmTimerInitTimer(prAdapter,
+					&prStaRec->rTxReqDoneOrRxRespTimer,
+					(PFN_MGMT_TIMEOUT_FUNC)
+					aaaFsmRunEventTxReqTimeOut,
+					(unsigned long) prStaRec,
+					TIMER_WAKELOCK_AUTO);
+
+				cnmTimerStartTimer(prAdapter,
+					&prStaRec->rTxReqDoneOrRxRespTimer,
+					TU_TO_MSEC(
+					DOT11_RSNA_SAE_RETRANS_PERIOD_TU));
+			}
+			return;
+		}
+#endif
+#if CFG_SUPPORT_SOFTAP_OWE
+		if (prBssInfo->u4RsnSelectedAKMSuite ==
+			RSN_AKM_SUITE_OWE) {
+			kalP2PIndicateRxMgmtFrame(prAdapter->prGlueInfo,
+				prSwRfb,
+				FALSE,
+				(uint8_t)prBssInfo->u4PrivateData);
+			DBGLOG(AAA, INFO, "[OWE] Forward RxAuth\n");
+			return;
+		}
+#endif
 		/* NOTE: Ignore the return status for AAA */
 		/* 4 <4> Reply  Auth */
 		if (WLAN_STATUS_SUCCESS !=
@@ -515,16 +549,14 @@ bow_proc:
 				&prStaRec->rTxReqDoneOrRxRespTimer,
 				(PFN_MGMT_TIMEOUT_FUNC)
 				aaaFsmRunEventTxReqTimeOut,
-				(unsigned long) prStaRec);
+				(unsigned long) prStaRec,
+				TIMER_WAKELOCK_AUTO);
 
 			cnmTimerStartTimer(prAdapter,
 				&prStaRec->rTxReqDoneOrRxRespTimer,
 				TU_TO_MSEC(
 					TX_AUTHENTICATION_RESPONSE_TIMEOUT_TU));
 		}
-
-
-
 	} else if (prStaRec)
 		cnmStaRecFree(prAdapter, prStaRec);
 }				/* end of aaaFsmRunEventRxAuth() */
@@ -641,8 +673,14 @@ uint32_t aaaFsmRunEventRxAssoc(IN struct ADAPTER *prAdapter,
 				    assocProcessRxAssocReqFrame(prAdapter,
 						prSwRfb, &u2StatusCode)) {
 
-					if (u2StatusCode
-						== STATUS_CODE_SUCCESSFUL) {
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+			if ((u2StatusCode
+				== STATUS_CODE_SUCCESSFUL) ||
+				(u2StatusCode
+				== WLAN_STATUS_SAE_HASH_TO_ELEMENT)) {
+#else
+			if (u2StatusCode == STATUS_CODE_SUCCESSFUL) {
+#endif
 						/* 4 <2.2>
 						 * Validate Assoc Req Frame
 						 * for Network Specific
@@ -877,7 +915,17 @@ uint32_t aaaFsmRunEventRxAssoc(IN struct ADAPTER *prAdapter,
 
 		/* NOTE: Ignore the return status for AAA */
 		/* 4 <4.2> Reply  Assoc Resp */
-		assocSendReAssocRespFrame(prAdapter, prStaRec);
+#if CFG_SUPPORT_SOFTAP_OWE
+		if (prBssInfo->u4RsnSelectedAKMSuite ==
+			RSN_AKM_SUITE_OWE) {
+			kalP2PIndicateRxMgmtFrame(prAdapter->prGlueInfo,
+				prSwRfb,
+				FALSE,
+				(uint8_t)prBssInfo->u4PrivateData);
+			DBGLOG(AAA, INFO, "[OWE] Forward RxAssoc\n");
+		} else
+#endif
+			assocSendReAssocRespFrame(prAdapter, prStaRec);
 
 #if CFG_SUPPORT_802_11W
 		/* AP PMF */

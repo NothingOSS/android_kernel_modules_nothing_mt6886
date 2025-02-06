@@ -75,7 +75,11 @@ else
 			fpsgo-y += $(REL_PREBUILT_O_PATH)/src/xgf_v3_ko_quark_fpga.o
 		else
 			ifeq (y,$(CONFIG_CFI_CLANG))
-				fpsgo-y += $(REL_PREBUILT_O_PATH)/src/xgf_v3_ko_quark.o
+				ifeq (y,$(CONFIG_SHADOW_CALL_STACK))
+					fpsgo-y += $(REL_PREBUILT_O_PATH)/src/xgf_v3_ko_quark.o
+				else
+					fpsgo-y += $(REL_PREBUILT_O_PATH)/src/xgf_v3_ko_quark_no_scs.o
+				endif
 			else
 				fpsgo-y += $(REL_PREBUILT_O_PATH)/src/xgf_v3_ko_quark_no_cfi.o
 			endif

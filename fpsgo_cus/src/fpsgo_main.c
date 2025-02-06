@@ -34,43 +34,23 @@
  */
 
 #include <linux/module.h>
-
-#if defined (CONFIG_MTK_FPSGO) || defined (CONFIG_MTK_FPSGO_V3)
-#include "xgf.h"
-#endif
 #include "fpsgo_ko.h"
-
-#line __LINE__ "vendor/mediatek/kernel_modules/fpsgo_cus/src/fpsgo_main.c"
 
 static void __exit fpsgo_exit(void) {}
 
 static int __init fpsgo_init(void)
 {
-#ifdef CONFIG_MTK_FPSGO
+#if IS_ENABLED(CONFIG_MTK_FPSGO)
 	xgf_est_slptime_fp = xgf_est_slptime;
 #endif
 
-#ifdef CONFIG_MTK_FPSGO_V3
+#if IS_ENABLED(CONFIG_MTK_FPSGO_V3)
 	int ret;
 
 	ret = xgf_ko_init();
-
 	pr_debug("%s %d: xgf_ko_init %d", __func__, __LINE__, ret);
-
 	if (ret)
 		return -1;
-
-	xgf_est_runtime_fp = xgf_est_runtime;
-	xgff_est_runtime_fp = xgff_est_runtime;
-	xgff_update_start_prev_index_fp = xgff_update_start_prev_index;
-	fpsgo_xgf2ko_calculate_target_fps_fp = fpsgo_xgf2ko_calculate_target_fps;
-	fpsgo_xgf2ko_do_recycle_fp = fpsgo_xgf2ko_do_recycle;
-	xgf_ema2_predict_fp = xgf_ema2_predict;
-	xgf_ema2_init_fp = xgf_ema2_init;
-
-	notify_xgf_ko_ready();
-
-	pr_debug("%s %d: finish", __func__, __LINE__);
 #endif
 
 	return 0;

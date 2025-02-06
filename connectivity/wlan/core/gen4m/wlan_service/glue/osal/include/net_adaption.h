@@ -1364,7 +1364,7 @@ struct list_mode_rx_status {
 };
 
 #define	LIST_SEG_MAX 100
-#define LIST_MODE_FW_SEG_NUM_MAX	8
+#define LIST_MODE_FW_SEG_NUM_MAX	6
 #define LIST_MODE_FW_SEG_PARA_NUM_MAX 30
 
 struct list_mode_event {

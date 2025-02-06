@@ -684,6 +684,8 @@ struct STA_RECORD {
 	/* When the STA is connected or TX key is ready */
 	u_int8_t fgIsTxAllowed;
 
+	enum ENUM_TXALLOW_REASON fgtxAllowReason;
+
 	/* Per-STA Queues: [0] AC0, [1] AC1, [2] AC2, [3] AC3 */
 	struct QUE arTxQueue[NUM_OF_PER_STA_TX_QUEUES];
 

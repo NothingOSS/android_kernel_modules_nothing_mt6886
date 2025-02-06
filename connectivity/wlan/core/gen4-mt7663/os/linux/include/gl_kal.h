@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+/* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  ** Id: /os/linux/include/gl_kal.h
  */
@@ -107,6 +61,8 @@ extern struct delayed_work sched_workq;
 extern struct delayed_work cfg80211_workq;
 #endif
 #endif
+
+extern struct delayed_work reg_set_workq;
 
 extern u_int8_t wlan_fb_power_down;
 extern u_int8_t wlan_perf_monitor_force_enable;
@@ -456,11 +412,16 @@ struct PARAM_CFG80211_REQ {
 	size_t frameLen;
 	uint8_t ucFlagTx;
 	uint8_t ucFrameType; /* auth deauth disassoc assoc and so on */
+	struct wiphy *pWiphy;
+	struct regulatory_request request;
+	uint8_t ucBssIndex;
 };
 
 enum ENUM_CFG80211_TX_FLAG {
 	CFG80211_RX,
-	CFG80211_TX
+	CFG80211_TX,
+	REG_SET, /* just use cfg80211 queue */
+	CFG80211_EVENT
 };
 #endif
 #endif
@@ -1246,6 +1207,9 @@ kalIndicateMgmtTxStatus(IN struct GLUE_INFO *prGlueInfo,
 void kalIndicateRxMgmtFrame(IN struct GLUE_INFO *prGlueInfo,
 			    IN struct SW_RFB *prSwRfb);
 
+u_int8_t kalValidateDevHandler(IN struct GLUE_INFO *prGlueInfo,
+				IN struct net_device *pDev);
+
 /*----------------------------------------------------------------------------*/
 /* Routines in interface - ehpi/sdio.c                                        */
 /*----------------------------------------------------------------------------*/
@@ -1647,11 +1611,12 @@ uint32_t kalWriteCorDumpFile(uint8_t *pucBuffer,
 uint32_t kalCloseCorDumpFile(u_int8_t fgIsN9);
 #endif
 
-#if CFG_SUPPORT_CFG80211_AUTH
-#if CFG_SUPPORT_CFG80211_QUEUE
 void kalAcquireWDevMutex(IN struct net_device *pDev);
 
 void kalReleaseWDevMutex(IN struct net_device *pDev);
+
+#if CFG_SUPPORT_CFG80211_AUTH
+#if CFG_SUPPORT_CFG80211_QUEUE
 
 void wlanSchedCfg80211WorkQueue(struct work_struct *work);
 
@@ -1685,16 +1650,53 @@ void kalWowInit(IN struct GLUE_INFO *prGlueInfo);
 void kalWowProcess(IN struct GLUE_INFO *prGlueInfo,
 		   uint8_t enable);
 #if CFG_SUPPORT_MDNS_OFFLOAD
-void kalMdnsProcess(IN struct GLUE_INFO *prGlueInfo,
+uint32_t kalMdnsProcess(IN struct GLUE_INFO *prGlueInfo,
 		IN struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo);
 void kalMdnsOffloadInit(IN struct ADAPTER *prAdapter);
 struct MDNS_PARAM_ENTRY_T *mdnsAllocateParamEntry(IN struct ADAPTER *prAdapter);
-void kalSendClearRecordToFw(struct GLUE_INFO *prGlueInfo);
-void kalSendMdnsRecordToFw(struct GLUE_INFO *prGlueInfo);
+
 void kalSendMdnsEnableToFw(struct GLUE_INFO *prGlueInfo);
-void kalAddMdnsRecord(struct GLUE_INFO *prGlueInfo,
-		struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo);
+void kalSendMdnsDisableToFw(struct GLUE_INFO *prGlueInfo);
+uint32_t kalAddMdnsRecord(struct GLUE_INFO *prGlueInfo,
+		    struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo);
+void kalDelMdnsRecord(struct GLUE_INFO *prGlueInfo,
+		    struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo);
+void kalDelMdnsRecordWithRecordKey(struct GLUE_INFO *prGlueInfo,
+		    struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo);
 void kalShowMdnsRecord(struct GLUE_INFO *prGlueInfo);
+struct MDNS_PASSTHROUGH_ENTRY_T *mdnsAllocatePassthroughEntry(
+	IN struct ADAPTER *prAdapter);
+uint32_t kalAddMdnsPassthrough(struct GLUE_INFO *prGlueInfo,
+		    struct MDNS_INFO_UPLAYER_T *prMdnsUplayerPassthroughInfo);
+void kalDelMdnsPassthrough(struct GLUE_INFO *prGlueInfo,
+		    struct MDNS_INFO_UPLAYER_T *prMdnsUplayerPassthroughInfo);
+void kalDelMdnsPassthroughWithRecordKey(struct GLUE_INFO *prGlueInfo,
+		    struct MDNS_INFO_UPLAYER_T *prMdnsUplayerPassthroughInfo);
+void kalShowMdnsPassthrough(struct GLUE_INFO *prGlueInfo);
+uint32_t kalGetAndResetHitCounterToFw(struct GLUE_INFO *prGlueInfo,
+		    int recordKey);
+uint32_t kalGetAndResetMissCounterToFw(struct GLUE_INFO *prGlueInfo);
+void kalClearMdnsRecord(struct GLUE_INFO *prGlueInfo);
+void kalClearMdnsPassthrough(struct GLUE_INFO *prGlueInfo);
+void kalSendMdnsFlagsToFw(struct GLUE_INFO *prGlueInfo);
+
+uint16_t kalGetMdnsUsedSize(struct GLUE_INFO *prGlueInfo);
+uint16_t kalGetMaxAvailMdnsSize(void);
+
+uint16_t kalGetMdnsUplRecSz(struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo);
+uint16_t kalGetMdnsUplPTSz(struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo);
+
+uint16_t kalMdnsConvettoDataBlock(struct GLUE_INFO *prGlueInfo);
+uint16_t kalMdnsAddToDataBlock(struct MDNS_DATABLOCK_T  *dataBlock,
+	uint8_t *data, uint16_t dataLength);
+uint16_t kalMdnsCopyPassToPayload(struct MDNS_PASSTHROUGH_T *passrthrough,
+	uint8_t *payload, uint16_t start);
+uint16_t kalMdnsCopyRecordToPayload(struct MDNS_RECORD_T *prMdnsRecordIndices,
+	uint16_t indexCount, uint8_t *payload, uint16_t start);
+uint16_t kalMdnsCopyDataToPayload(struct MDNS_DATABLOCK_T  *dataBlock,
+	uint8_t *payload, uint16_t start);
+uint8_t KalMdnsIncreTopHalf(uint8_t value);
+
 #if CFG_SUPPORT_MDNS_OFFLOAD_GVA
 void kalProcessMdnsRespPkt(struct GLUE_INFO *prGlueInfo, uint8_t *pucMdnsHdr);
 #endif
@@ -1807,7 +1809,7 @@ int kalRxNapiPoll(struct napi_struct *napi, int budget);
 void kal_Set_Thread_SchPolicy_Priority(IN struct GLUE_INFO *prGlueInfo);
 
 unsigned long kal_kallsyms_lookup_name(const char *name);
-
+void kal_kallsyms_put(const char *name);
 void kal_sched_set(struct task_struct *p, int policy,
 		const struct sched_param *param,
 		int nice);
@@ -1825,6 +1827,16 @@ void kal_sched_set(struct task_struct *p, int policy,
 #else
 #define kal_fallthrough do {} while (0)  /* fallthrough */
 #endif
+
+static inline void kal_eth_hw_addr_set(struct net_device *dev,
+				       const uint8_t *addr)
+{
+#if KERNEL_VERSION(5, 17, 0) <= LINUX_VERSION_CODE
+	eth_hw_addr_set(dev, addr);
+#else
+	kalMemCopy(dev->dev_addr, addr, ETH_ALEN);
+#endif
+}
 
 #endif				/* _GL_KAL_H */
 

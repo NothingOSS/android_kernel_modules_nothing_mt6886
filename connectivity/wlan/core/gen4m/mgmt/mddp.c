@@ -1748,6 +1748,7 @@ static bool wait_for_md_on_complete(void)
 	bool fgCompletion = false;
 	struct GLUE_INFO *prGlueInfo = NULL;
 	uint32_t u4MDOnTimeoutTime = MD_ON_OFF_TIMEOUT;
+	uint32_t u4LoopCount = 0;
 
 	u4StartTime = kalGetTimeTick();
 	WIPHY_PRIV(wlanGetWiphy(), prGlueInfo);
@@ -1780,7 +1781,16 @@ static bool wait_for_md_on_complete(void)
 			break;
 		}
 
-		kalMsleep(CFG_RESPONSE_POLLING_DELAY);
+		kalMsleep_interruptible(CFG_RESPONSE_POLLING_DELAY);
+
+		u4LoopCount++;
+		if (u4LoopCount >=
+		    u4MDOnTimeoutTime / CFG_RESPONSE_POLLING_DELAY) {
+			DBGLOG(INIT, WARN,
+				"Check loop. Cur:%u, Start:%u, Timeout:%u\n",
+				u4CurTime, u4StartTime, u4MDOnTimeoutTime);
+			u4LoopCount = 0;
+		}
 	} while (TRUE);
 
 	return fgCompletion;

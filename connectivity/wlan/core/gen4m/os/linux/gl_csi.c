@@ -261,7 +261,9 @@ void nicEventCSIData(struct ADAPTER *prAdapter,
 
 	i4EventLen = prEvent->u2PacketLength -
 			sizeof(struct WIFI_EVENT);
-	if (i4EventLen > CSI_EVENT_MAX_SIZE) {
+	if (i4EventLen > CSI_EVENT_MAX_SIZE ||
+	    i4EventLen < sizeof(struct CSI_TLV_ELEMENT) ||
+	    i4EventLen < (u2Offset + sizeof(uint32_t))) {
 		DBGLOG(NIC, WARN, "[CSI] Invalid CSI event size %u\n",
 			i4EventLen);
 		return;
@@ -282,8 +284,19 @@ void nicEventCSIData(struct ADAPTER *prAdapter,
 #if CFG_CSI_DEBUG
 	DBGLOG_MEM8(NIC, INFO, (uint8_t *) prBuf, i4EventLen);
 #endif
-	while ((i4EventLen >= u2Offset) && (ucLastTagFlg == false)) {
+	while ((i4EventLen >= (u2Offset + sizeof(uint32_t))) &&
+		(ucLastTagFlg == false)) {
 		prCSITlvData = (struct CSI_TLV_ELEMENT *) prBuf;
+
+		if (prCSITlvData->body_len >
+			(i4EventLen - (int32_t) u2Offset)) {
+			DBGLOG(NIC, WARN,
+				"[CSI] Invalid body_len: %u, tag_type=%u\n",
+				prCSITlvData->body_len,
+				prCSITlvData->tag_type);
+			goto out;
+		}
+
 
 #if CFG_CSI_DEBUG
 		DBGLOG(NIC, TRACE, "[CSI] tag_type=%d, body_len=%d\n",
@@ -601,11 +614,20 @@ void nicEventCSIData(struct ADAPTER *prAdapter,
 		default:
 			DBGLOG(NIC, WARN, "[CSI] Unsupported CSI tag %d\n",
 				prCSITlvData->tag_type);
+			if (prCSITlvData->body_len
+				> (i4EventLen - sizeof(struct CSI_TLV_ELEMENT))
+				|| prCSITlvData->body_len
+					< sizeof(struct CSI_TLV_ELEMENT)) {
+				DBGLOG(NIC, WARN,
+					"[CSI] Invalid body_len %u",
+					prCSITlvData->body_len);
+				goto out;
+			}
 		};
 
 		i4EventLen -= (u2Offset + prCSITlvData->body_len);
 
-		if (i4EventLen >= u2Offset)
+		if (i4EventLen >= (u2Offset + sizeof(uint32_t)))
 			prBuf += (u2Offset + prCSITlvData->body_len);
 	}
 

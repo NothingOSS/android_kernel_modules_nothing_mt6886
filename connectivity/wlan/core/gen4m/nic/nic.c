@@ -2733,8 +2733,6 @@ uint32_t nicUpdateBssEx(struct ADAPTER *prAdapter,
 		if (prBssDesc != NULL)
 			rCmdSetBssInfo.ucIotApAct = prBssDesc->ucIotApAct;
 #if CFG_SUPPORT_SMART_GEAR
-		DBGLOG(SW4, INFO, "[SG]cnmAisInfraConnectNotify,%d\n",
-		       prBssInfo->eConnectionState);
 		if (prBssInfo->eConnectionState == MEDIA_STATE_CONNECTED) {
 			uint8_t ucSGEnable = TRUE, ucDutNss = 0;
 			struct STA_RECORD *prCurStaRec;

@@ -1531,7 +1531,7 @@ static int kbase_api_sticky_resource_map(struct kbase_context *kctx,
 	if (ret != 0)
 		return -EFAULT;
 
-	kbase_gpu_vm_lock(kctx);
+	kbase_gpu_vm_lock_with_pmode_sync(kctx);
 
 	for (i = 0; i < map->count; i++) {
 		if (!kbase_sticky_resource_acquire(kctx, gpu_addr[i])) {
@@ -1548,7 +1548,7 @@ static int kbase_api_sticky_resource_map(struct kbase_context *kctx,
 		}
 	}
 
-	kbase_gpu_vm_unlock(kctx);
+	kbase_gpu_vm_unlock_with_pmode_sync(kctx);
 
 	return ret;
 }
@@ -1569,7 +1569,7 @@ static int kbase_api_sticky_resource_unmap(struct kbase_context *kctx,
 	if (ret != 0)
 		return -EFAULT;
 
-	kbase_gpu_vm_lock(kctx);
+	kbase_gpu_vm_lock_with_pmode_sync(kctx);
 
 	for (i = 0; i < unmap->count; i++) {
 		if (!kbase_sticky_resource_release_force(kctx, NULL, gpu_addr[i])) {
@@ -1578,7 +1578,7 @@ static int kbase_api_sticky_resource_unmap(struct kbase_context *kctx,
 		}
 	}
 
-	kbase_gpu_vm_unlock(kctx);
+	kbase_gpu_vm_unlock_with_pmode_sync(kctx);
 
 	return ret;
 }

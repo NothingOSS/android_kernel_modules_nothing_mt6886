@@ -139,6 +139,7 @@ static int conndump_nl_bind_internal(struct dump_netlink_ctx* ctx, struct sk_buf
 		port = (unsigned int)nla_get_u32(port_na);
 	} else {
 		pr_err("%s:-> no port_na found\n", __func__);
+		mutex_unlock(&ctx->nl_lock);
 		return -1;
 	}
 

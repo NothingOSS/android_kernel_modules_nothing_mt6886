@@ -1,54 +1,8 @@
-/*******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+/* SPDX-License-Identifier: BSD-2-Clause */
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  * Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/os/linux/include
  *     /gl_rst.h#1
@@ -115,6 +69,7 @@ enum _ENUM_CHIP_RESET_REASON_TYPE_T {
 	RST_BT_TRIGGER,
 	RST_OID_TIMEOUT,
 	RST_CMD_TRIGGER,
+	RST_CMD_EVT_FAIL,
 	RST_REASON_MAX
 };
 
@@ -234,7 +189,8 @@ extern u_int8_t fgIsResetHangState;
 	if (eResetReason == RST_OID_TIMEOUT || \
 		eResetReason == RST_FW_ASSERT || \
 		eResetReason == RST_CMD_TRIGGER || \
-		eResetReason == RST_BT_TRIGGER) { \
+		eResetReason == RST_BT_TRIGGER || \
+		eResetReason == RST_CMD_EVT_FAIL) { \
 		glResetTrigger(_prAdapter, (_u4Flags), \
 			(const uint8_t *)__FILE__, __LINE__); \
 	} else { \
@@ -275,7 +231,10 @@ extern u_int8_t mtk_wcn_stp_coredump_start_get(void);
  *******************************************************************************
  */
 #if CFG_CHIP_RESET_SUPPORT
-void glResetInit(struct GLUE_INFO *prGlueInfo);
+typedef void(*wlanRemoveFunc) (void);
+void glResetInit(struct GLUE_INFO *prGlueInfo, wlanRemoveFunc pfRemove);
+void glReseProbeRemoveDone(struct GLUE_INFO *prGlueInfo, int32_t i4Status,
+			   u_int8_t fgIsProbe);
 
 void glResetUninit(void);
 
@@ -291,6 +250,10 @@ void glGetRstReason(enum _ENUM_CHIP_RESET_REASON_TYPE_T
 		    eReason);
 #if CFG_WMT_RESET_API_SUPPORT
 u_int8_t glIsWmtCodeDump(void);
+#endif
+#if CFG_CHIP_RESET_KO_SUPPORT
+void resetkoNotifyFunc(unsigned int event, void *data);
+void resetkoReset(void);
 #endif
 #else
 

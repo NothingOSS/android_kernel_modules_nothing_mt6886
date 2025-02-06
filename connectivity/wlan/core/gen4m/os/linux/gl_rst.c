@@ -636,10 +636,23 @@ void glResetTrigger(struct ADAPTER *prAdapter,
 	struct CHIP_DBG_OPS *prDbgOps = NULL;
 #if !IS_ENABLED(CFG_SUPPORT_CONNAC1X)
 	int ret = 0;
+	struct GLUE_INFO *prGlueInfo = NULL;
 #endif
 
-	if (kalIsResetting())
+	if (kalIsResetting()) {
+		DBGLOG(INIT, WARN, "already in reset, skip reset.\n");
 		goto exit;
+	}
+
+	/* Avoid doing reset triggered by CMD when WIFI write is processing */
+#if CFG_MTK_ANDROID_WMT && !IS_ENABLED(CFG_SUPPORT_CONNAC1X)
+	if (get_wifi_process_status() == 1 &&
+	   (eResetReason == RST_CMD_TRIGGER ||
+	    eResetReason == RST_FWK_TRIGGER))
+		goto exit;
+#endif
+	if (prAdapter && eResetReason == RST_DRV_OWN_FAIL)
+		prAdapter->fgRstByDrvOwn = 1;
 
 #if CFG_MTK_MDDP_SUPPORT
 	mddpNotifyWifiReset();
@@ -717,6 +730,15 @@ void glResetTrigger(struct ADAPTER *prAdapter,
 		goto exit;
 	}
 
+	WIPHY_PRIV(wlanGetWiphy(), prGlueInfo);
+	if (!prGlueInfo || prGlueInfo->u4ReadyFlag == 0 ||
+	    prGlueInfo->prAdapter != prAdapter) {
+		DBGLOG(INIT, WARN, "driver is not ready, skip reset.\n");
+		prAdapter = NULL;
+		glResetCleanResetFlag();
+		goto exit;
+	}
+
 	if (rst->is_suspend) {
 		uint32_t status;
 
@@ -738,6 +760,8 @@ void glResetTrigger(struct ADAPTER *prAdapter,
 #endif
 exit:
 	fgIsMcuOff = FALSE;
+	if (prAdapter)
+		prAdapter->fgRstByDrvOwn = 0;
 }
 #else
 /* The following definition is of ce. */
@@ -1513,10 +1537,13 @@ int glRstwlanPreWholeChipReset(enum consys_drv_type type, char *reason)
 			"Wi-Fi on/off process is ongoing, wait here.\n");
 		msleep(100);
 	}
+	wfsys_lock();
 	if (!get_wifi_powered_status()) {
 		DBGLOG(REQ, WARN, "wifi driver is off now\n");
+		wfsys_unlock();
 		return bRet;
 	}
+	wfsys_unlock();
 
 	triggerHifDumpIfNeed();
 
@@ -1611,10 +1638,20 @@ int wlan_pre_whole_chip_rst_v3(enum connv3_drv_type drv,
 		msleep(100);
 	}
 
+	while (kalIsResetOnEnd()) {
+		DBGLOG(REQ, WARN,
+			"wifi driver is resetting, isRstOverThres=%u, isBusHang=%u\n",
+			g_IsSubsysRstOverThreshold, g_IsWfsysBusHang);
+		kalMsleep(100);
+	}
+
+	wfsys_lock();
 	if (!get_wifi_powered_status()) {
 		DBGLOG(REQ, WARN, "wifi driver is off now\n");
+		wfsys_unlock();
 		return 0;
 	}
+	wfsys_unlock();
 
 	WIPHY_PRIV(wlanGetWiphy(), prGlueInfo);
 	prAdapter = prGlueInfo->prAdapter;
@@ -1639,21 +1676,11 @@ int wlan_pre_whole_chip_rst_v3(enum connv3_drv_type drv,
 	g_WholeChipRstReason = reason;
 
 	if (glRstCheckRstCriteria()) {
-		while (kalIsResetOnEnd()) {
-			DBGLOG(REQ, WARN, "wifi driver is resetting\n");
-			msleep(100);
-		}
-
 		g_IsWholeChipRst = TRUE;
 
 		GL_DEFAULT_RESET_TRIGGER(prGlueInfo->prAdapter,
 					 RST_WHOLE_CHIP_TRIGGER);
 	} else {
-		while (kalIsResetOnEnd() &&
-				fgIsDrvTriggerWholeChipReset == FALSE) {
-			DBGLOG(REQ, WARN, "Wi-Fi driver is resetting\n");
-			msleep(100);
-		}
 		fgIsDrvTriggerWholeChipReset = FALSE;
 		g_IsWholeChipRst = TRUE;
 

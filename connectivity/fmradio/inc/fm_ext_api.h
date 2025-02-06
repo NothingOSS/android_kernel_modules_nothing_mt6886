@@ -92,6 +92,7 @@ struct fm_ext_interface {
 	unsigned int reg_map[FM_REG_MAP_MAX];
 	unsigned int base_addr[FM_BASE_ADDR_MAX];
 	unsigned int base_size[FM_BASE_ADDR_MAX];
+	bool is_power_on;
 };
 
 #endif /* FM_EXT_API_H */

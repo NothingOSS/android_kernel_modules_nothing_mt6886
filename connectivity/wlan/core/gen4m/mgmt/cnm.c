@@ -1003,8 +1003,19 @@ void cnmChMngrHandleChEvent(struct ADAPTER *prAdapter,
 	       prAdapter->ucHwBssIdNum);
 	ASSERT(prEventBody->ucStatus == EVENT_CH_STATUS_GRANT);
 
+	if (prEventBody->ucBssIndex >= ARRAY_SIZE(prAdapter->aprBssInfo)) {
+		DBGLOG(CNM, ERROR, "ucBssIndex out of range %u!\n",
+			prEventBody->ucBssIndex);
+		return;
+	}
+
 	prBssInfo =
 		prAdapter->aprBssInfo[prEventBody->ucBssIndex];
+
+	if (!prBssInfo) {
+		DBGLOG(CNM, ERROR, "prBssInfo is NULL\n");
+		return;
+	}
 
 	/* Decide message ID based on network and response status */
 	if (IS_BSS_AIS(prBssInfo))
@@ -3826,6 +3837,28 @@ cnmDbdcFsmExitFunc_WAIT_HW_DISABLE(
 		cnmDBDCFsmActionReqPeivilegeUnLock(prAdapter);
 }
 
+/*----------------------------------------------------------------------------*/
+/*!
+ * @brief check whether DBDC is disabled
+ *        to avoid STA disable DBDC during roaming, which may cause DBDC->MCC,
+ *        check DBDC status before cnmDbdcPreConnectionEnableDecision
+ *
+ * @param ADAPTER
+ *
+ * @return boolean
+ */
+/*----------------------------------------------------------------------------*/
+bool cnmDbdcIsDisabled(struct ADAPTER *prAdapter)
+{
+	if (prAdapter->rWifiVar.fgDbDcModeEn == FALSE)
+		return TRUE;
+
+	if (g_rDbdcInfo.fgHasSentCmd == TRUE &&
+		g_rDbdcInfo.fgCmdEn == FALSE)
+		return TRUE;
+
+	return FALSE;
+}
 
 /*----------------------------------------------------------------------------*/
 /*!

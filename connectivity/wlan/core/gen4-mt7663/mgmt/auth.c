@@ -1,54 +1,8 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ */
+
 /*
  * Id: //Department/DaVinci/BRANCHES/MT6620_WIFI_DRIVER_V2_3/mgmt/auth.c#1
  */
@@ -681,16 +635,15 @@ uint32_t authCheckTxAuthFrame(IN struct ADAPTER *prAdapter,
 uint32_t authCheckRxAuthFrameTransSeq(IN struct ADAPTER *prAdapter,
 				      IN struct SW_RFB *prSwRfb)
 {
-	struct WLAN_AUTH_FRAME *prAuthFrame;
-	uint16_t u2RxTransactionSeqNum;
-	uint16_t u2MinPayloadLen;
+	struct WLAN_AUTH_FRAME *prAuthFrame = NULL;
+	uint16_t u2RxTransactionSeqNum = 0;
+	uint16_t u2MinPayloadLen = 0;
 #if CFG_SUPPORT_SAE
 #if CFG_IGNORE_INVALID_AUTH_TSN
-	struct STA_RECORD *prStaRec;
+	struct STA_RECORD *prStaRec = NULL;
 #endif
 	struct BSS_INFO *prBssInfo = NULL;
 #endif
-
 
 	ASSERT(prSwRfb);
 
@@ -721,13 +674,17 @@ uint32_t authCheckRxAuthFrameTransSeq(IN struct ADAPTER *prAdapter,
 	u2RxTransactionSeqNum = prAuthFrame->u2AuthTransSeqNo;
 	/* NOTE(Kevin): Optimized for ARM */
 #endif
+	DBGLOG(SAA, LOUD,
+		   "Authentication Packet: Auth Trans Seq No = %d\n",
+		   u2RxTransactionSeqNum);
 
-	if ((u2RxTransactionSeqNum < 0) || (u2RxTransactionSeqNum > 4)) {
+	if (u2RxTransactionSeqNum > 4) {
 		DBGLOG(SAA, WARN,
 			"RX auth with unexpected TransactionSeqNum:%d\n",
 			u2RxTransactionSeqNum);
 		return WLAN_STATUS_SUCCESS;
 	}
+
 #if CFG_SUPPORT_SAE
 	if (prAuthFrame->u2AuthAlgNum == AUTH_ALGORITHM_NUM_SAE) {
 		if ((u2RxTransactionSeqNum ==
@@ -1449,6 +1406,7 @@ authProcessRxAuth1Frame(IN struct ADAPTER *prAdapter,
 			OUT uint16_t *pu2ReturnStatusCode)
 {
 	struct WLAN_AUTH_FRAME *prAuthFrame;
+	uint16_t u2RxStatusCode;
 	uint16_t u2ReturnStatusCode = STATUS_CODE_SUCCESSFUL;
 
 	ASSERT(prSwRfb);
@@ -1471,6 +1429,23 @@ authProcessRxAuth1Frame(IN struct ADAPTER *prAdapter,
 	}
 
 	/* 4 <4> Parse the Fixed Fields of Authentication Frame Body. */
+#if CFG_SUPPORT_CFG80211_AUTH
+	u2RxStatusCode = (prAuthFrame->aucAuthData[3] << 8) +
+					prAuthFrame->aucAuthData[2];
+#else
+	u2RxStatusCode = prAuthFrame->u2StatusCode;
+#endif
+
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+	if ((u2RxStatusCode != STATUS_CODE_RESERVED) &&
+		(u2RxStatusCode != WLAN_STATUS_SAE_HASH_TO_ELEMENT)) {
+#else
+	if (u2RxStatusCode != STATUS_CODE_RESERVED) {
+#endif
+		DBGLOG(AAA, LOUD, "Invalid Status code %d\n", u2RxStatusCode);
+		return WLAN_STATUS_FAILURE;
+	}
+
 	if (prAuthFrame->u2AuthAlgNum != u2ExpectedAuthAlgNum)
 		u2ReturnStatusCode = STATUS_CODE_AUTH_ALGORITHM_NOT_SUPPORTED;
 
@@ -1486,6 +1461,82 @@ authProcessRxAuth1Frame(IN struct ADAPTER *prAdapter,
 	return WLAN_STATUS_SUCCESS;
 
 }				/* end of authProcessRxAuth1Frame() */
+
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+uint32_t
+authProcessRxAuthFrame(IN struct ADAPTER *prAdapter,
+			IN struct SW_RFB *prSwRfb,
+			IN struct BSS_INFO *prBssInfo,
+			OUT uint16_t *pu2ReturnStatusCode)
+{
+	struct WLAN_AUTH_FRAME *prAuthFrame;
+	uint16_t u2ReturnStatusCode = STATUS_CODE_SUCCESSFUL;
+	uint16_t u2RxTransactionSeqNum = 0;
+	uint16_t u2RxStatusCode;
+
+	if (!prBssInfo)
+		return WLAN_STATUS_FAILURE;
+
+	/* 4 <1> locate the Authentication Frame. */
+	prAuthFrame = (struct WLAN_AUTH_FRAME *)prSwRfb->pvHeader;
+
+#if (CFG_SUPPORT_CFG80211_AUTH == 1)
+	u2RxTransactionSeqNum = prAuthFrame->aucAuthData[0];
+#else
+	u2RxTransactionSeqNum = prAuthFrame->u2AuthTransSeqNo;
+#endif
+
+	/* 4 <2> Check the BSSID */
+	if (UNEQUAL_MAC_ADDR(prAuthFrame->aucBSSID,
+		prBssInfo->aucBSSID))
+		return WLAN_STATUS_FAILURE;	/* Just Ignore this MMPDU */
+
+	/* 4 <3> Check the SA, which should not be MC/BC */
+	if (prAuthFrame->aucSrcAddr[0] & BIT(0)) {
+		DBGLOG(P2P, WARN,
+		       "Invalid STA MAC with MC/BC bit set: " MACSTR "\n",
+		       MAC2STR(prAuthFrame->aucSrcAddr));
+		return WLAN_STATUS_FAILURE;
+	}
+
+#if (CFG_SUPPORT_CFG80211_AUTH == 1)
+	u2RxStatusCode = (prAuthFrame->aucAuthData[3] << 8) +
+				prAuthFrame->aucAuthData[2];
+#else
+	u2RxStatusCode = prAuthFrame->u2StatusCode;
+#endif
+
+#if (CFG_SUPPORT_SOFTAP_WPA3 == 1)
+	if ((u2RxStatusCode != STATUS_CODE_RESERVED) &&
+		(u2RxStatusCode != WLAN_STATUS_SAE_HASH_TO_ELEMENT))
+#else
+	if (u2RxStatusCode != STATUS_CODE_RESERVED)
+#endif
+	{
+		DBGLOG(AAA, LOUD, "Invalid Status code %d\n", u2RxStatusCode);
+		return WLAN_STATUS_FAILURE;
+	}
+
+	/* 4 <4> Parse the Fixed Fields of Authentication Frame Body. */
+	if (prAuthFrame->u2AuthAlgNum != AUTH_ALGORITHM_NUM_OPEN_SYSTEM &&
+		prAuthFrame->u2AuthAlgNum != AUTH_ALGORITHM_NUM_SAE)
+		u2ReturnStatusCode = STATUS_CODE_AUTH_ALGORITHM_NOT_SUPPORTED;
+	else if (prAuthFrame->u2AuthAlgNum == AUTH_ALGORITHM_NUM_OPEN_SYSTEM &&
+		u2RxTransactionSeqNum != AUTH_TRANSACTION_SEQ_1)
+		u2ReturnStatusCode = STATUS_CODE_AUTH_OUT_OF_SEQ;
+	else if (prAuthFrame->u2AuthAlgNum == AUTH_ALGORITHM_NUM_SAE &&
+		u2RxTransactionSeqNum != AUTH_TRANSACTION_SEQ_1 &&
+		u2RxTransactionSeqNum != AUTH_TRANSACTION_SEQ_2)
+		u2ReturnStatusCode = STATUS_CODE_AUTH_OUT_OF_SEQ;
+
+	DBGLOG(AAA, LOUD, "u2ReturnStatusCode = %d\n", u2ReturnStatusCode);
+
+	*pu2ReturnStatusCode = u2ReturnStatusCode;
+
+	return WLAN_STATUS_SUCCESS;
+
+}
+#endif
 
 /* ToDo: authAddRicIE, authHandleFtIEs, authAddTimeoutIE */
 

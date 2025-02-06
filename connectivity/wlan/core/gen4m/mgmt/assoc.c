@@ -841,10 +841,11 @@ static uint8_t assocSkipRSNXIe(struct ADAPTER *prAdapter,
 			aisGetTargetBssDesc(prAdapter, ucBssIndex);
 
 		/* skip rsnxe if target ap doesn't support rsnxe */
-		if (prStaRec->ucAuthAlgNum ==
-			AUTH_ALGORITHM_NUM_FAST_BSS_TRANSITION
-			 && prTargetBss && !prTargetBss->fgIERSNX)
+		if (prTargetBss && !prTargetBss->fgIERSNX) {
+			DBGLOG(SAA, LOUD,
+				"Skip RSNXE if AP unsupported");
 			return TRUE;
+		}
 	}
 
 	return FALSE;
@@ -1740,7 +1741,16 @@ uint32_t assocProcessRxAssocReqFrameImpl(
 				prIeSupportedRate = SUP_RATES_IOT_IE(pucIE);
 
 			break;
-
+		case ELEM_ID_SUP_CHS:
+			if ((IE_LEN(pucIE) >
+				ELEM_MAX_LEN_SUPPORTED_CHANNELS)
+				|| (IE_LEN(pucIE) & 0x01))
+				return WLAN_STATUS_FAILURE;
+			break;
+		case ELEM_ID_PWR_CAP:
+			if (IE_LEN(pucIE) != ELEM_MAX_LEN_POWER_CAP)
+				return WLAN_STATUS_FAILURE;
+			break;
 		case ELEM_ID_EXTENDED_SUP_RATES:
 			if (!prIeExtSupportedRate)
 				prIeExtSupportedRate = EXT_SUP_RATES_IE(pucIE);

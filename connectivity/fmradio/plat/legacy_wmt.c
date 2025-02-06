@@ -374,7 +374,7 @@ void register_fw_ops_init(void)
 		ei->low_ops_unregister = mt6631_fm_low_ops_unregister;
 		ei->rds_ops_register = mt6631_fm_rds_ops_register;
 		ei->rds_ops_unregister = mt6631_fm_rds_ops_unregister;
-	} else if (adie == 0x6635) {
+	} else if (adie == 0x6635 || adie == 0x6637) {
 		ei->low_ops_register = mt6635_fm_low_ops_register;
 		ei->low_ops_unregister = mt6635_fm_low_ops_unregister;
 		ei->rds_ops_register = mt6635_fm_rds_ops_register;

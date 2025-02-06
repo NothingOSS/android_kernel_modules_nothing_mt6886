@@ -147,15 +147,27 @@ do { \
 
 #define LINK_MGMT_GET_ENTRY(prLinkMgmt, prEntry, EntryType, memType) \
 	do { \
-		LINK_REMOVE_HEAD(&((struct LINK_MGMT *)prLinkMgmt)->rFreeLink, \
-			prEntry, EntryType*); \
-		if (!prEntry) \
-			prEntry = kalMemAlloc(sizeof(EntryType), memType); \
-		if (prEntry) {\
-			kalMemZero(prEntry, sizeof(EntryType));\
-			LINK_INSERT_TAIL(                                      \
-				&((struct LINK_MGMT *)prLinkMgmt)->rUsingLink, \
-				&prEntry->rLinkEntry);                         \
+		if (LINK_IS_INVALID( \
+		    &((struct LINK_MGMT *)prLinkMgmt)->rFreeLink)) { \
+			DBGLOG(INIT, ERROR, "FreeLink is invalid\n"); \
+		} \
+		else if (LINK_IS_INVALID( \
+		    &((struct LINK_MGMT *)prLinkMgmt)->rUsingLink)) { \
+			DBGLOG(INIT, ERROR, "UsingLink is invalid\n"); \
+		} \
+		else { \
+			LINK_REMOVE_HEAD( \
+				&((struct LINK_MGMT *)prLinkMgmt)->rFreeLink, \
+				prEntry, EntryType*); \
+			if (!prEntry) \
+				prEntry = kalMemAlloc(sizeof(EntryType), \
+						  memType); \
+			if (prEntry) { \
+				kalMemZero(prEntry, sizeof(EntryType)); \
+				LINK_INSERT_TAIL( \
+				    &((struct LINK_MGMT *)prLinkMgmt) \
+				    ->rUsingLink, &prEntry->rLinkEntry); \
+			} \
 		} \
 	} while (0)
 
@@ -267,16 +279,31 @@ do { \
  */
 #define LINK_REMOVE_HEAD(prLink, prEntry, _P_TYPE) \
 	{ \
-	    ASSERT(prLink); \
-		if (LINK_IS_EMPTY(prLink)) { \
+		ASSERT(prLink); \
+		if (LINK_IS_INVALID(prLink)) { \
 			prEntry = (_P_TYPE)NULL; \
-	    } \
+			DBGLOG(INIT, ERROR, "link is invalid\n"); \
+			ASSERT(LINK_IS_VALID(prLink)); \
+		} \
+		else if (LINK_IS_EMPTY(prLink)) {  \
+			prEntry = (_P_TYPE)NULL; \
+		} \
 		else { \
 			prEntry = \
-			    (_P_TYPE)(((struct LINK *)(prLink))->prNext); \
-			linkDel((struct LINK_ENTRY *)prEntry); \
-			((prLink)->u4NumElem)--; \
-	    } \
+				(_P_TYPE)(((struct LINK *)(prLink))->prNext); \
+			ASSERT(LINK_ENTRY_IS_VALID(prEntry)); \
+			ASSERT(LINK_ENTRY_IS_VALID_LINK_LIST(prEntry)); \
+			if ((LINK_ENTRY_IS_VALID(prEntry)) \
+			    && (LINK_ENTRY_IS_VALID_LINK_LIST(prEntry))) { \
+				linkDel((struct LINK_ENTRY *)prEntry); \
+				((prLink)->u4NumElem)--; \
+			} \
+			else { \
+				prEntry = (_P_TYPE)NULL; \
+				DBGLOG(INIT, ERROR, \
+					"link entry is invalid\n"); \
+			} \
+		} \
 	}
 
 /* Assume the link entry located at the beginning of prEntry Type.
@@ -291,25 +318,43 @@ do { \
 	}
 
 /* Merge prSrcLink to prDstLink and put prSrcLink ahead of prDstLink */
-#define LINK_MERGE_TO_HEAD(prDstLink, prSrcLink)                               \
-	{                                                                      \
-		if (!LINK_IS_EMPTY(prSrcLink)) {                               \
-			linkMergeToHead((struct LINK *)prDstLink,              \
-					(struct LINK *)prSrcLink);             \
-			(prDstLink)->u4NumElem += (prSrcLink)->u4NumElem;      \
-			LINK_INITIALIZE(prSrcLink);                            \
-		}                                                              \
+/* Check if the LINK is VALID first */
+#define LINK_MERGE_TO_HEAD(prDstLink, prSrcLink) \
+	{ \
+		if ((!LINK_IS_INVALID(prSrcLink)) \
+		    && (!LINK_IS_INVALID(prDstLink))) { \
+			if (!LINK_IS_EMPTY(prSrcLink)) { \
+				linkMergeToHead( \
+					(struct LINK *)prDstLink, \
+					(struct LINK *)prSrcLink); \
+				(prDstLink)->u4NumElem += \
+					(prSrcLink)->u4NumElem; \
+				LINK_INITIALIZE(prSrcLink); \
+			} \
+		} \
+		else { \
+			DBGLOG(INIT, ERROR, "link is invalid\n"); \
+		} \
 	}
 
 /* Merge prSrcLink to prDstLink and put prSrcLink at tail */
-#define LINK_MERGE_TO_TAIL(prDstLink, prSrcLink)                               \
-	{                                                                      \
-		if (!LINK_IS_EMPTY(prSrcLink)) {                               \
-			linkMergeToTail((struct LINK *)prDstLink,              \
-					(struct LINK *)prSrcLink);             \
-			(prDstLink)->u4NumElem += (prSrcLink)->u4NumElem;      \
-			LINK_INITIALIZE(prSrcLink);                            \
-		}                                                              \
+/* Check if the LINK is VALID first */
+#define LINK_MERGE_TO_TAIL(prDstLink, prSrcLink) \
+	{ \
+		if ((!LINK_IS_INVALID(prSrcLink)) \
+		    && (!LINK_IS_INVALID(prDstLink))) { \
+			if (!LINK_IS_EMPTY(prSrcLink)) { \
+				linkMergeToTail( \
+					(struct LINK *)prDstLink, \
+					(struct LINK *)prSrcLink); \
+				(prDstLink)->u4NumElem += \
+					(prSrcLink)->u4NumElem; \
+				LINK_INITIALIZE(prSrcLink); \
+			} \
+		} \
+		else { \
+			DBGLOG(INIT, ERROR, "link is invalid\n"); \
+		} \
 	}
 
 /* Iterate over a link list */
