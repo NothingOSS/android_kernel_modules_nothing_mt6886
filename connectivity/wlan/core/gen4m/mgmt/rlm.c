@@ -2674,6 +2674,8 @@ void rlmParseMtkOui(
 
 			sub = prPreWifi7->aucInfoElem;
 			sub_len = IE_LEN(prPreWifi7) - 2;
+			if (IE_LEN(prPreWifi7) <= 2)
+				return;
 
 			IE_FOR_EACH(sub, sub_len, sub_offset) {
 #if (CFG_SUPPORT_802_11BE == 1)

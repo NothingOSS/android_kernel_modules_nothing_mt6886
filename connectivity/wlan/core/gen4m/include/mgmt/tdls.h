@@ -480,6 +480,7 @@ TdlsSendChSwControlCmd(struct ADAPTER *prAdapter,
 		       uint32_t *pu4SetInfoLen);
 
 void TdlsHandleTxDoneStatus(struct ADAPTER *prAdapter,
+			struct MSDU_INFO *prMsduInfo,
 			enum ENUM_TX_RESULT_CODE rTxDoneStatus);
 
 uint8_t TdlsEnabled(struct ADAPTER *pAd);

@@ -7585,7 +7585,7 @@ void wlanInitFeatureOption(struct ADAPTER *prAdapter)
 	prWifiVar->ucStaBandwidth = (uint8_t) wlanCfgGetUint32(
 				prAdapter, "StaBw", MAX_BW_320_2MHZ);
 	prWifiVar->ucSta2gBandwidth = (uint8_t) wlanCfgGetUint32(
-				prAdapter, "Sta2gBw", MAX_BW_20MHZ);
+				prAdapter, "Sta2gBw", MAX_BW_40MHZ);
 	prWifiVar->ucSta5gBandwidth = (uint8_t) wlanCfgGetUint32(
 				prAdapter, "Sta5gBw", MAX_BW_160MHZ);
 	prWifiVar->ucSta6gBandwidth = (uint8_t) wlanCfgGetUint32(
@@ -11249,7 +11249,7 @@ wlanPktTxDone(struct ADAPTER *prAdapter,
 
 #if CFG_SUPPORT_TDLS
 	if (prMsduInfo->ucPktType == ENUM_PKT_TDLS)
-		TdlsHandleTxDoneStatus(prAdapter, rTxDoneStatus);
+		TdlsHandleTxDoneStatus(prAdapter, prMsduInfo, rTxDoneStatus);
 #endif /* CFG_SUPPORT_TDLS */
 
 #if CFG_SUPPORT_TX_MGMT_USE_DATAQ

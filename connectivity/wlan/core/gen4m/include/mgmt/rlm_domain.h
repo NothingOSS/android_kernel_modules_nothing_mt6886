@@ -1536,6 +1536,7 @@ rlmDomainUpdateRegdomainFromaLocalDataBaseByCountryCode(
 /* dynamic tx power control */
 void txPwrCtrlInit(struct ADAPTER *prAdapter);
 void txPwrCtrlLoadConfig(struct ADAPTER *prAdapter);
+void txPwrCtrlGlobalVariableToListByCountryCode(struct ADAPTER *prAdapter);
 void txPwrCtrlUninit(struct ADAPTER *prAdapter);
 void txPwrCtrlShowList(struct ADAPTER *prAdapter,
 				uint8_t filterType,
