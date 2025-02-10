@@ -3,3 +3,6 @@
   - First release opensource of kernel and kernel modules
   - Kernel modules path
      - vendor/mediatek/kernel_modules/
+
+2. OS 3.0 (Pacman-V3.0-250114-1909)
+  - Improve wifi
