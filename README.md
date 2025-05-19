@@ -6,3 +6,6 @@
 
 2. OS 3.0 (Pacman-V3.0-250114-1909)
   - Improve wifi
+
+3. OS 3.0 (Pacman-V3.0-250304-1904)
+  - Improve wifi
