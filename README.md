@@ -9,3 +9,6 @@
 
 3. OS 3.0 (Pacman-V3.0-250304-1904)
   - Improve wifi
+
+4. OS 3.0 (Pacman-V3.0-250429-1922)
+  - No update
