@@ -2010,7 +2010,8 @@ const uint8_t *mldFindMlIE(const uint8_t *ies, uint16_t len, uint8_t type)
 			return ies;
 
 		/* only check tlv */
-		if (IE_LEN(ies) < ELEM_MIN_LEN_MTK_OUI ||
+		if (IE_ID(ies) != ELEM_ID_VENDOR ||
+		    IE_LEN(ies) < ELEM_MIN_LEN_MTK_OUI ||
 		    kalMemCmp(ies + 2, aucMtkOui, sizeof(aucMtkOui)) ||
 		    !(MTK_OUI_IE(ies)->aucCapability[0] &
 				MTK_SYNERGY_CAP_SUPPORT_TLV))
@@ -2023,6 +2024,10 @@ const uint8_t *mldFindMlIE(const uint8_t *ies, uint16_t len, uint8_t type)
 			if (IE_ID(ie) == MTK_OUI_ID_PRE_WIFI7) {
 				struct IE_MTK_PRE_WIFI7 *prPreWifi7 =
 					(struct IE_MTK_PRE_WIFI7 *)ie;
+
+				if (IE_SIZE(prPreWifi7) <
+				    sizeof(struct IE_MTK_PRE_WIFI7))
+					return NULL;
 
 				sub = prPreWifi7->aucInfoElem;
 				sub_len = IE_LEN(prPreWifi7) - 2;

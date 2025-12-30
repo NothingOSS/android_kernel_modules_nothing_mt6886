@@ -214,7 +214,7 @@ struct GL_HIF_INFO {
 	uint32_t u4TxDataQLen[NUM_OF_TX_RING];
 	spinlock_t rTxDataQLock[NUM_OF_TX_RING];
 #if (CFG_SUPPORT_TX_DATA_DELAY == 1)
-	struct timer_list rTxDelayTimer;
+	struct hrtimer rTxDelayTimer;
 	unsigned long rTxDelayTimerData;
 	unsigned long ulTxDataTimeout;
 #endif /* CFG_SUPPORT_TX_DATA_DELAY == 1 */

@@ -138,7 +138,10 @@ void kalSetCpuFreq(int32_t freq)
 			if (!wReq)
 				break;
 			wReq->cpu = cpu;
+			wReq->qos_req.qos = NULL;
 
+			/* Initialize wReq->qos_req before using it */
+			memset(&wReq->qos_req, 0, sizeof(wReq->qos_req));
 			ret = freq_qos_add_request(&policy->constraints,
 				&wReq->qos_req, FREQ_QOS_MIN, DEFAULT_CPU_FREQ);
 			if (ret < 0) {

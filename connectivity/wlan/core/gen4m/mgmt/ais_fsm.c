@@ -1383,7 +1383,9 @@ void aisFsmStateInit_JOIN(struct ADAPTER *prAdapter,
 
 	if (!prStaRec) {
 		DBGLOG(AIS, ERROR,
-			"aisFsmStateInit_JOIN failed because prStaRec is NULL, return.\n");
+			"aisFsmStateInit_JOIN failed because prStaRec is NULL, return JOIN_FAILURE.\n");
+		aisFsmStateAbort_JOIN(prAdapter, ucBssIndex);
+		aisFsmSteps(prAdapter, AIS_STATE_JOIN_FAILURE, ucBssIndex);
 		return;
 	}
 

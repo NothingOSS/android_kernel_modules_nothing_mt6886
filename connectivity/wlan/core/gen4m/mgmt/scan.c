@@ -1869,7 +1869,7 @@ void scanParsingRnrElement(struct ADAPTER *prAdapter,
 				}
 				prScanParam->ucSSIDType =
 					SCAN_REQ_SSID_SPECIFIED;
-				DBGLOG(SCN, STATE,
+				DBGLOG(SCN, TRACE,
 					"OOB scan specific SSIDNum %d\n",
 					prScanParam->ucSSIDNum);
 			} else {
@@ -4670,9 +4670,13 @@ void scanParseCheckMTKOuiIE(struct ADAPTER *prAdapter,
 			struct IE_MTK_PRE_WIFI7 *prPreWifi7 =
 				(struct IE_MTK_PRE_WIFI7 *)ie;
 
-			DBGLOG(SCN, TRACE, "MTK_OUI_PRE_WIFI7 %d.%d",
+			DBGLOG_MEM8(SCN, LOUD, ie, IE_SIZE(ie));
+			if (IE_SIZE(prPreWifi7) <
+			    sizeof(struct IE_MTK_PRE_WIFI7))
+				return;
+
+			DBGLOG(SCN, LOUD, "MTK_OUI_PRE_WIFI7 %d.%d",
 				prPreWifi7->ucVersion1, prPreWifi7->ucVersion0);
-			DBGLOG_MEM8(SCN, TRACE, ie, IE_SIZE(ie));
 
 			sub = prPreWifi7->aucInfoElem;
 			sub_len = IE_LEN(prPreWifi7) - 2;
@@ -4857,6 +4861,16 @@ void scanParseEhtCapIE(uint8_t *pucIE, struct BSS_DESC *prBssDesc)
 	struct IE_EHT_CAP *ehtCap = NULL;
 
 	ehtCap = (struct IE_EHT_CAP *) pucIE;
+
+	/* if payload not contain any aucVarInfo,
+	 * IE size = sizeof(struct IE_EHT_CAP)
+	 */
+	if (IE_SIZE(ehtCap) < (sizeof(struct IE_EHT_CAP))) {
+		DBGLOG(SCN, WARN,
+			"EHT_CAP IE_SIZE err(%d)!\n", IE_SIZE(ehtCap));
+		return;
+	}
+
 	prBssDesc->fgIsEHTPresent = TRUE;
 	prBssDesc->u2MaximumMpdu = (ehtCap->ucEhtMacCap[0] &
 		EHT_MAC_CAP_MAX_MPDU_LEN_MASK);
@@ -4875,6 +4889,15 @@ void scanParseEhtOpIE(uint8_t *pucIE, struct BSS_DESC *prBssDesc,
 	struct EHT_OP_INFO *prEhtOpInfo;
 
 	prEhtOp = (struct IE_EHT_OP *) pucIE;
+
+	/* if payload not contain any aucVarInfo,
+	 * IE size = sizeof(struct IE_EHT_OP)
+	 */
+	if (IE_SIZE(prEhtOp) < (sizeof(struct IE_EHT_OP))) {
+		DBGLOG(SCN, WARN,
+			"EHT_OP IE_SIZE err(%d)!\n", IE_SIZE(prEhtOp));
+		return;
+	}
 
 	if (EHT_IS_OP_PARAM_OP_INFO_PRESENT(prEhtOp->ucEhtOpParams)) {
 

@@ -1463,25 +1463,17 @@ void halReturnTimeoutMsduToken(struct ADAPTER *prAdapter)
 }
 
 #if (CFG_SUPPORT_TX_DATA_DELAY == 1)
-#if KERNEL_VERSION(4, 15, 0) <= CFG80211_VERSION_CODE
-void halTxDelayTimeout(struct timer_list *timer)
-#else
-void halTxDelayTimeout(unsigned long arg)
-#endif
+enum hrtimer_restart halTxDelayTimeout(struct hrtimer *timer)
 {
-#if (KERNEL_VERSION(4, 15, 0) <= CFG80211_VERSION_CODE)
-	struct GL_HIF_INFO *prHif = from_timer(prHif, timer, rTxDelayTimer);
+	struct GL_HIF_INFO *prHifInfo =
+		container_of(timer, struct GL_HIF_INFO, rTxDelayTimer);
 	struct GLUE_INFO *prGlueInfo =
-		(struct GLUE_INFO *)prHif->rTxDelayTimerData;
-#else
-	struct GLUE_INFO *prGlueInfo = (struct GLUE_INFO *)arg;
-#endif
+		(struct GLUE_INFO *)prHifInfo->rTxDelayTimerData;
 	struct ADAPTER *prAdapter = NULL;
-	struct GL_HIF_INFO *prHifInfo;
 
 	if (test_bit(GLUE_FLAG_HALT_BIT, &prGlueInfo->ulFlag)) {
 		DBGLOG(HAL, INFO, "GLUE_FLAG_HALT skip tx delay timeout\n");
-		return;
+		return HRTIMER_NORESTART;
 	}
 
 	prAdapter = prGlueInfo->prAdapter;
@@ -1495,23 +1487,28 @@ void halTxDelayTimeout(unsigned long arg)
 		    prHifInfo->ulTxDataTimeout);
 
 	kalSetTxEvent2Hif(prGlueInfo);
+
+	return HRTIMER_NORESTART;
 }
 
 void halStartTxDelayTimer(struct ADAPTER *prAdapter)
 {
 	struct GLUE_INFO *prGlueInfo;
 	struct GL_HIF_INFO *prHifInfo;
-	uint32_t u4Timeout = prAdapter->rWifiVar.u4TxDataDelayTimeout;
+	uint32_t u4Timeout;
+	ktime_t delay;
 
 	prGlueInfo = prAdapter->prGlueInfo;
 	prHifInfo = &prGlueInfo->rHifInfo;
+	u4Timeout = prAdapter->rWifiVar.u4TxDataDelayTimeout;
 
 	if (KAL_TEST_BIT(HIF_TX_DATA_DELAY_TIMER_RUNNING_BIT,
 			 prHifInfo->ulTxDataTimeout))
 		return;
 
-	mod_timer(&prHifInfo->rTxDelayTimer,
-		  jiffies + u4Timeout * HZ / MSEC_PER_SEC);
+	delay = ktime_set(0, u4Timeout * 1E6L);
+	hrtimer_start(&prHifInfo->rTxDelayTimer, delay, HRTIMER_MODE_REL);
+
 	KAL_SET_BIT(HIF_TX_DATA_DELAY_TIMER_RUNNING_BIT,
 		    prHifInfo->ulTxDataTimeout);
 
@@ -1569,17 +1566,10 @@ bool halHifSwInfoInit(struct ADAPTER *prAdapter)
 		jiffies + HIF_SER_TIMEOUT * HZ / MSEC_PER_SEC;
 
 #if (CFG_SUPPORT_TX_DATA_DELAY == 1)
-#if (KERNEL_VERSION(4, 15, 0) <= CFG80211_VERSION_CODE)
-	timer_setup(&prHifInfo->rTxDelayTimer, halTxDelayTimeout, 0);
-	prHifInfo->rTxDelayTimerData = (unsigned long)prAdapter->prGlueInfo;
-#else
-	init_timer(&prHifInfo->rTxDelayTimer);
+	hrtimer_init(&prHifInfo->rTxDelayTimer,
+		CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	prHifInfo->rTxDelayTimer.function = halTxDelayTimeout;
-	prHifInfo->rTxDelayTimer.data = (unsigned long)prAdapter->prGlueInfo;
-#endif
-	prHifInfo->rTxDelayTimer.expires =
-		jiffies + prAdapter->rWifiVar.u4TxDataDelayTimeout *
-		HZ / MSEC_PER_SEC;
+	prHifInfo->rTxDelayTimerData = (unsigned long)prAdapter->prGlueInfo;
 	prHifInfo->ulTxDataTimeout = 0;
 #endif /* CFG_SUPPORT_TX_DATA_DELAY == 1 */
 
@@ -1650,7 +1640,7 @@ void halHifSwInfoUnInit(struct GLUE_INFO *prGlueInfo)
 
 	del_timer_sync(&prHifInfo->rSerTimer);
 #if (CFG_SUPPORT_TX_DATA_DELAY == 1)
-	del_timer_sync(&prHifInfo->rTxDelayTimer);
+	hrtimer_cancel(&prHifInfo->rTxDelayTimer);
 #endif
 
 	halUninitMsduTokenInfo(prGlueInfo->prAdapter);

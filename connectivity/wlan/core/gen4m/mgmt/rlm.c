@@ -2635,9 +2635,8 @@ void rlmParseMtkOui(
 {
 	uint8_t aucMtkOui[] = VENDOR_OUI_MTK;
 	uint8_t *aucCapa = MTK_OUI_IE(pucIE)->aucCapability;
-	uint8_t *ie, *sub;
-	uint16_t ie_len, ie_offset, sub_len, sub_offset;
-
+	uint8_t *ie;
+	uint16_t ie_len, ie_offset;
 	if (kalMemCmp(MTK_OUI_IE(pucIE)->aucOui,
 		aucMtkOui, sizeof(aucMtkOui)))
 		return;
@@ -2664,13 +2663,21 @@ void rlmParseMtkOui(
 	ie_len = IE_LEN(pucIE) - 7;
 
 	IE_FOR_EACH(ie, ie_len, ie_offset) {
+#if IS_ENABLED(CFG_SUPPORT_PRE_WIFI7)
+		uint16_t sub_len, sub_offset;
+		uint8_t *sub;
+
 		if (IE_ID(ie) == MTK_OUI_ID_PRE_WIFI7) {
 			struct IE_MTK_PRE_WIFI7 *prPreWifi7 =
 				(struct IE_MTK_PRE_WIFI7 *)ie;
 
+			DBGLOG_MEM8(RLM, TRACE, ie, IE_SIZE(ie));
+			if (IE_SIZE(prPreWifi7) <
+			    sizeof(struct IE_MTK_PRE_WIFI7))
+				return;
+
 			DBGLOG(RLM, TRACE, "MTK_OUI_PRE_WIFI7 %d.%d",
 				prPreWifi7->ucVersion1, prPreWifi7->ucVersion0);
-			DBGLOG_MEM8(RLM, TRACE, ie, IE_SIZE(ie));
 
 			sub = prPreWifi7->aucInfoElem;
 			sub_len = IE_LEN(prPreWifi7) - 2;
@@ -2687,6 +2694,7 @@ void rlmParseMtkOui(
 #endif
 			}
 		}
+#endif
 	}
 }
 

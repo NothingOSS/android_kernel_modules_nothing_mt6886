@@ -392,6 +392,10 @@ if MALI_ARBITRATION
 source "drivers/gpu/arm/midgard/arbitration/Kconfig"
 endif
 
+config MALI_MTK_GPU_FREQUENCY_TRACE
+	bool "provide gpu_frequency trace event"
+	default n
+
 source "drivers/gpu/arm/midgard/tests/Kconfig"
 
 endif

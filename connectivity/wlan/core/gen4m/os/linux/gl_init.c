@@ -1838,6 +1838,8 @@ static const struct wiphy_wowlan_support mtk_wlan_wowlan_support = {
  *******************************************************************************
  */
 
+static void wlanRemove(void);
+
 /*******************************************************************************
  *                              F U N C T I O N S
  *******************************************************************************
@@ -6200,11 +6202,11 @@ int32_t wlanOnWhenProbeSuccess(struct GLUE_INFO *prGlueInfo,
 	wlanOnP2pRegistration(prGlueInfo, prAdapter, gprWdev[0]);
 	halSetSuspendFlagToFw(prAdapter, FALSE);
 #if CFG_MODIFY_TX_POWER_BY_BAT_VOLT
-	if (wlan_bat_volt == 3550) {
+	if (wlan_bat_volt == BACKOFF_VOLT) {
 		kalEnableTxPwrBackoffByBattVolt(prAdapter, TRUE);
 		kalSetTxPwrBackoffByBattVolt(prAdapter, TRUE);
 		fgIsTxPowerDecreased = TRUE;
-	} else if (wlan_bat_volt == 3650) {
+	} else if (wlan_bat_volt == RESTORE_VOLT) {
 		kalEnableTxPwrBackoffByBattVolt(prAdapter, TRUE);
 		kalSetTxPwrBackoffByBattVolt(prAdapter, FALSE);
 		fgIsTxPowerDecreased = FALSE;
@@ -6390,6 +6392,8 @@ int32_t wlanOffAtReset(void)
 
 	wlanAdapterStop(prAdapter, TRUE);
 
+	kalWlanUeventDeinit(prGlueInfo);
+
 	/* 4 <x> Stopping handling interrupt and free IRQ */
 	prBusInfo = prAdapter->chip_info->bus_info;
 	nicDisableInterrupt(prAdapter);
@@ -6521,6 +6525,8 @@ int32_t wlanOnAtReset(void)
 			break;
 		}
 
+		kalWlanUeventInit(prGlueInfo);
+
 		if (wlanOnPreNetRegister(prGlueInfo, prAdapter,
 					 prAdapter->chip_info,
 					 &prAdapter->rWifiVar,
@@ -6596,6 +6602,9 @@ int32_t wlanOnAtReset(void)
 		 * If WMT being removed in the future, you should invoke
 		 * wlanRemove directly from here
 		 */
+		kalSendAeeWarning("WFSYS", "wlanOnAtReset fail\n");
+		wlanRemove();
+
 #if 0
 		switch (eFailReason) {
 		case ADAPTER_START_FAIL:
@@ -6777,8 +6786,8 @@ static int32_t wlanProbe(void *pvData, void *pvDriverData)
 
 		mddpNotifyWifiOnStart();
 #endif
-
-		kalWlanUeventInit(); /* FW might send Uevent on start running */
+		/* FW might send Uevent on start running */
+		kalWlanUeventInit(prGlueInfo);
 
 		if (wlanOnPreNetRegister(prGlueInfo, prAdapter, prChipInfo,
 					 prWifiVar, FALSE)) {
@@ -6930,6 +6939,7 @@ static int32_t wlanProbe(void *pvData, void *pvDriverData)
 			wait_for_completion_interruptible(
 							&prGlueInfo->rHaltComp);
 			wlanAdapterStop(prAdapter, FALSE);
+			kalWlanUeventDeinit(prGlueInfo);
 		/* fallthrough */
 		case ADAPTER_START_FAIL:
 			/*reset NVRAM State to ready for the next wifi-on*/
@@ -7019,7 +7029,7 @@ wlanOffNotifyCfg80211Disconnect(struct GLUE_INFO *prGlueInfo)
  * \return (none)
  */
 /*----------------------------------------------------------------------------*/
-static void wlanRemove(void)
+void wlanRemove(void)
 {
 	struct net_device *prDev = NULL;
 	struct NETDEV_PRIVATE_GLUE_INFO *prNetDevPrivate = NULL;
@@ -7258,7 +7268,7 @@ static void wlanRemove(void)
 
 	wlanAdapterStop(prAdapter, FALSE);
 
-	kalWlanUeventDeinit();
+	kalWlanUeventDeinit(prGlueInfo);
 
 	HAL_LP_OWN_SET(prAdapter, &fgResult);
 	DBGLOG(INIT, INFO, "HAL_LP_OWN_SET(%d)\n",

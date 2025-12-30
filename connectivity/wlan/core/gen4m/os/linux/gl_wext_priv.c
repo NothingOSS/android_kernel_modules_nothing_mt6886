@@ -408,7 +408,7 @@ static struct WLAN_REQ_ENTRY arWlanOidReqTable[] = {
  *******************************************************************************
  */
 
-static int compat_priv(struct net_device *prNetDev,
+int compat_priv(struct net_device *prNetDev,
 	     struct iw_request_info *prIwReqInfo,
 		 union iwreq_data *prIwReqData, char *pcExtra,
 	     int (*priv_func)(struct net_device *prNetDev,
@@ -450,6 +450,13 @@ static int compat_priv(struct net_device *prNetDev,
 	return ret;
 }
 
+#ifdef CONFIG_COMPAT
+#ifdef in_compat_syscall
+	#define mtk_is_compat_task in_compat_syscall
+#else
+	#define mtk_is_compat_task is_compat_task
+#endif
+#endif
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief Dispatching function for private ioctl region (SIOCIWFIRSTPRIV ~
@@ -476,7 +483,10 @@ int priv_support_ioctl(struct net_device *prNetDev,
 
 	/* Prepare the call */
 	rIwReqInfo.cmd = (__u16) i4Cmd;
-	rIwReqInfo.flags = 0;
+	if (mtk_is_compat_task())
+		rIwReqInfo.flags = 1;
+	else
+		rIwReqInfo.flags = 0;
 
 	switch (i4Cmd) {
 	case IOCTL_SET_INT:
@@ -531,8 +541,7 @@ int priv_support_ioctl(struct net_device *prNetDev,
 	/* This case need to fall through */
 	case IOC_AP_SET_AX_MODE:
 		return priv_set_ap(prNetDev, &rIwReqInfo, &(prIwReq->u),
-				     (char *) &(prIwReq->u));
-
+				(char *) &(prIwReq->u));
 	case IOCTL_GET_STR:
 
 	default:
@@ -6423,7 +6432,7 @@ static int32_t priv_driver_dump_txpower_info(struct ADAPTER *prAdapter,
 				i4BytesWritten += kalScnprintf(
 					pcCommand + i4BytesWritten,
 					i4TotalLen - i4BytesWritten,
-					"%05s", allRateStr[ucTxPwrIdx]);
+					"%5s", allRateStr[ucTxPwrIdx]);
 			}
 
 			i4BytesWritten += kalScnprintf(
@@ -6489,7 +6498,7 @@ static int32_t priv_driver_dump_txpower_info(struct ADAPTER *prAdapter,
 					i4BytesWritten += kalScnprintf(
 					pcCommand + i4BytesWritten,
 					i4TotalLen - i4BytesWritten,
-					"%03s:%03d, ",
+					"%3s:%03d, ",
 					rateStr,
 					rRatePowerInfo.
 					aicFramePowerConfig[u2Idx][ucBandIdx].

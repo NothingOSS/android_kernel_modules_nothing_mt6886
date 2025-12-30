@@ -471,6 +471,12 @@ extern uint8_t  g_fgHTSMPSEnabled;
  *			F U N C T I O N   D E C L A R A T I O N S
  *******************************************************************************
  */
+int compat_priv(struct net_device *prNetDev,
+		struct iw_request_info *prIwReqInfo,
+		union iwreq_data *prIwReqData, char *pcExtra,
+		int (*priv_func)(struct net_device *prNetDev,
+		struct iw_request_info *prIwReqInfo,
+		union iwreq_data *prIwReqData, char *pcExtra));
 
 int
 priv_set_int(struct net_device *prNetDev,

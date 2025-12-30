@@ -118,7 +118,7 @@ struct kbase_context *kbase_create_context(struct kbase_device *kbdev,
 	bool is_compat,
 	base_context_create_flags const flags,
 	unsigned long const api_version,
-	struct kbase_file *const kfile)
+	struct file *const filp)
 {
 	struct kbase_context *kctx;
 	unsigned int i = 0;
@@ -137,7 +137,7 @@ struct kbase_context *kbase_create_context(struct kbase_device *kbdev,
 
 	kctx->kbdev = kbdev;
 	kctx->api_version = api_version;
-	kctx->kfile = kfile;
+	kctx->filp = filp;
 	kctx->create_flags = flags;
 
 	memcpy(kctx->comm, current->comm, sizeof(current->comm));

@@ -658,8 +658,6 @@ OUT:
 long BT_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	INT32 retval = 0;
-	UINT32 reason = 0;
-	UINT32 ver = 0;
 	uint8_t host_dbg_buff[32] = {0}; //arg: id[0:3], value[4:7], desc[8:31]
 	BT_LOG_PRT_DBG("cmd: 0x%08x\n", cmd);
 
@@ -669,6 +667,7 @@ long BT_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	}
 
 	switch (cmd) {
+#if 0
 	case COMBO_IOCTL_FW_ASSERT:
 		/* Trigger FW assert for debug */
 		reason = (UINT32)arg & 0xFFFF;
@@ -707,6 +706,7 @@ long BT_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		if (copy_to_user((UINT32 __user *)arg, &ver, sizeof(ver)))
 			retval = -EFAULT;
 		break;
+#endif
 	case COMBO_IOCTL_BT_HOST_DEBUG:
 		if (copy_from_user(host_dbg_buff, (uint8_t __user*)arg, 32))
 			retval = -EFAULT;

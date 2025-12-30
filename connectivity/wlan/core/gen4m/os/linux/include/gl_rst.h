@@ -216,6 +216,7 @@ extern int32_t get_wifi_process_status(void);
 extern int32_t get_wifi_powered_status(void);
 extern int wifi_reset_start(void);
 extern int wifi_reset_end(enum ENUM_RESET_STATUS);
+extern void update_whole_chip_rst_status(uint8_t fgIsWholeChipRst);
 #endif
 #endif /* CFG_CHIP_RESET_SUPPORT */
 

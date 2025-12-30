@@ -867,7 +867,7 @@ int32_t mddpNotifyDrvTxd(struct ADAPTER *prAdapter,
 	prNotifyInfo->info_num = 1;
 	prDrvInfo = (struct mddpw_drv_info_t *) &(prNotifyInfo->buf[0]);
 	prDrvInfo->info_id = WSVC_DRVINFO_TXD_TEMPLATE;
-	prDrvInfo->info_len = (sizeof(struct mddpw_txd_t) +
+	prDrvInfo->info_len = (sizeof(struct mddp_txd_t) +
 			NIC_TX_DESC_LONG_FORMAT_LENGTH);
 	prMddpTxd = (struct mddp_txd_t *) &(prDrvInfo->info[0]);
 	prMddpTxd->version = 1;
@@ -950,7 +950,7 @@ int32_t mddpNotifyWifiStatus(enum ENUM_MDDPW_DRV_INFO_STATUS status)
 		prDrvInfo->info[0] = status;
 
 		ret = gMddpWFunc.notify_drv_info(prNotifyInfo);
-		DBGLOG(INIT, INFO, "power: %d, ret: %d, feature:%d.\n",
+		DBGLOG(INIT, TRACE, "power: %d, ret: %d, feature:%d.\n",
 		       status, ret, feature);
 		kalMemFree(buff, VIR_MEM_TYPE, u32BufSize);
 		g_eMddpStatus = status;

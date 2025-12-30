@@ -82,6 +82,11 @@ void gps_mcudl_xlink_test_fw_own_ctrl(bool to_set)
 {
 	bool ntf = false;
 
+	if (gps_mcudl_hal_get_open_flag() == 0) {
+		MDL_LOGW("not active, bypass");
+		return;
+	}
+
 	if (to_set) {
 		ntf = gps_mcudl_hal_user_set_fw_own_may_notify(GMDL_FW_OWN_CTRL_BY_TEST);
 		MDL_LOGW("to_set=%d, ntf=%d", to_set, ntf);
@@ -96,6 +101,11 @@ void gps_mcudl_xlink_test_fw_own_ctrl(bool to_set)
 
 void gps_mcudl_xlink_test_toggle_ccif(unsigned int ch)
 {
+	if (gps_mcudl_hal_get_open_flag() == 0) {
+		MDL_LOGW("not active, bypass");
+		return;
+	}
+
 	if (ch >= 8)
 		return;
 	gps_mcudl_hal_ccif_tx_prepare(ch);
@@ -107,17 +117,27 @@ bool gps_mcudl_xlink_test_toggle_reset_by_gps_hif(unsigned int type)
 	bool is_okay;
 	unsigned char buf[2];
 
-	buf[0] = '\x04';
-	buf[1] = (unsigned char)(type & 0xFF);
-	is_okay = gps_mcu_hif_send(GPS_MCU_HIF_CH_DMALESS_MGMT, &buf[0], 2);
-	MDL_LOGW("write cmd4, type=%u, is_ok=%d", type, is_okay);
-	return is_okay;
+	if (gps_mcudl_hal_get_open_flag() != 0) {
+		buf[0] = '\x04';
+		buf[1] = (unsigned char)(type & 0xFF);
+		is_okay = gps_mcu_hif_send(GPS_MCU_HIF_CH_DMALESS_MGMT, &buf[0], 2);
+		MDL_LOGW("write cmd4, type=%u, is_ok=%d", type, is_okay);
+		return is_okay;
+	}
+
+	MDL_LOGW("GPS is not active, FalseAlarm");
+	return false;
 }
 
 void gps_mcudl_xlink_test_read_mcu_reg(unsigned int addr, unsigned int bytes)
 {
 	bool is_okay;
 	unsigned char buf[12];
+
+	if (gps_mcudl_hal_get_open_flag() == 0) {
+		MDL_LOGW("not active, bypass");
+		return;
+	}
 
 	memset(&buf[0], 0, sizeof(buf));
 	buf[0] = 5;
@@ -133,6 +153,11 @@ void gps_mcudl_xlink_test_query_ver(void)
 {
 	bool is_okay = false;
 
+	if (gps_mcudl_hal_get_open_flag() == 0) {
+		MDL_LOGW("not active, bypass");
+		return;
+	}
+
 	is_okay = gps_mcu_hif_send(GPS_MCU_HIF_CH_DMALESS_MGMT, "\x06", 1);
 	MDL_LOGW("write cmd6, is_ok=%d", is_okay);
 }
@@ -142,6 +167,11 @@ void gps_mcudl_xlink_test_wakeup_ap_later(unsigned int data)
 	bool is_okay = false;
 	unsigned char u8_data;
 	unsigned char send_data[2];
+
+	if (gps_mcudl_hal_get_open_flag() == 0) {
+		MDL_LOGW("not active, bypass");
+		return;
+	}
 
 	u8_data = data & 0xff;
 	send_data[0] = '\x09';
@@ -153,6 +183,11 @@ void gps_mcudl_xlink_test_wakeup_ap_later(unsigned int data)
 void gps_mcudl_xlink_test_send_4byte_mgmt_data(unsigned int data_4byte)
 {
 	bool is_okay = false;
+
+	if (gps_mcudl_hal_get_open_flag() == 0) {
+		MDL_LOGW("not active, bypass");
+		return;
+	}
 
 	is_okay = gps_mcu_hif_send(GPS_MCU_HIF_CH_DMALESS_MGMT,
 		(const unsigned char *)&data_4byte, 4);

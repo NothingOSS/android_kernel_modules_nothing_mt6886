@@ -471,6 +471,7 @@ restart:
     if (gTtyFd < 0)
         goto exit;
 
+#if !defined(__ANDROID__) // In sp project, baudrate is controled by driver
     /* before exit daemon, return baud to default */
     if (chang_baud_rate | flow_control) {
         sUartConfig.iBaudrate = CUST_BAUDRATE_DFT;
@@ -490,6 +491,7 @@ restart:
             goto exit;
         }
     }
+#endif
 
 exit:
 

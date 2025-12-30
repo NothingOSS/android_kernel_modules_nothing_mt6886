@@ -130,6 +130,9 @@ void gps_each_link_inc_session_id(enum gps_dl_link_id_enum link_id)
 	struct gps_each_link *p = gps_dl_link_get(link_id);
 	int sid;
 
+	if (NULL == p)
+		return;
+
 	gps_each_link_spin_lock_take(link_id, GPS_DL_SPINLOCK_FOR_LINK_STATE);
 	if (p->session_id >= GPS_EACH_LINK_SID_MAX)
 		p->session_id = 1;
@@ -146,6 +149,9 @@ int gps_each_link_get_session_id(enum gps_dl_link_id_enum link_id)
 	struct gps_each_link *p = gps_dl_link_get(link_id);
 	int sid;
 
+	if (NULL == p)
+		return -1;
+
 	gps_each_link_spin_lock_take(link_id, GPS_DL_SPINLOCK_FOR_LINK_STATE);
 	sid = p->session_id;
 	gps_each_link_spin_lock_give(link_id, GPS_DL_SPINLOCK_FOR_LINK_STATE);
@@ -157,6 +163,9 @@ enum gps_each_link_state_enum gps_each_link_get_state(enum gps_dl_link_id_enum l
 {
 	struct gps_each_link *p = gps_dl_link_get(link_id);
 	enum gps_each_link_state_enum state;
+
+	if (NULL == p)
+		return LINK_UNINIT;
 
 	gps_each_link_spin_lock_take(link_id, GPS_DL_SPINLOCK_FOR_LINK_STATE);
 	state = p->state_for_user;
@@ -170,6 +179,8 @@ void gps_each_link_set_state(enum gps_dl_link_id_enum link_id, enum gps_each_lin
 	struct gps_each_link *p = gps_dl_link_get(link_id);
 	enum gps_each_link_state_enum pre_state;
 
+	if (NULL == p)
+		return;
 
 	gps_each_link_spin_lock_take(link_id, GPS_DL_SPINLOCK_FOR_LINK_STATE);
 	pre_state = p->state_for_user;
@@ -187,6 +198,9 @@ bool gps_each_link_change_state_from(enum gps_dl_link_id_enum link_id,
 	struct gps_each_link *p = gps_dl_link_get(link_id);
 	enum gps_each_link_state_enum pre_state;
 	enum gps_each_link_reset_level old_level, new_level;
+
+	if (NULL == p)
+		return false;
 
 	gps_each_link_spin_lock_take(link_id, GPS_DL_SPINLOCK_FOR_LINK_STATE);
 	pre_state = p->state_for_user;

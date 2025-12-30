@@ -14,6 +14,26 @@
 #include "include/mt6985_pos_gen.h"
 #include "include/mt6985_soc.h"
 
+#include "dvfsrc-common.h"
+
+static int connsys_pm_dev_drv_probe(struct platform_device *pdev);
+
+static struct platform_device *connsys_pm_device = NULL;
+const struct of_device_id consys_pm_mt6985_of_ids[] = {
+	{.compatible = "mediatek,mt6985-connsys-pm",},
+	{}
+};
+
+static struct platform_driver connsys_pm_dev_drv_mt6985 = {
+	.probe = connsys_pm_dev_drv_probe,
+	.driver = {
+		.name = "mt6985-consys-pm",
+#ifdef CONFIG_OF
+		.of_match_table = consys_pm_mt6985_of_ids,
+#endif
+		.probe_type = PROBE_FORCE_SYNCHRONOUS,
+	},
+};
 
 int consys_co_clock_type_mt6985(void)
 {
@@ -40,10 +60,39 @@ int consys_co_clock_type_mt6985(void)
 	return clock_type;
 }
 
-int consys_clk_get_from_dts_mt6985(struct platform_device *pdev)
+static int connsys_pm_dev_drv_probe(struct platform_device *pdev)
 {
+	if (pdev == NULL) {
+		pr_notice("[%s] invalid input", __func__);
+		return -1;
+	}
+
+	pr_info("[%s] ---\n", __func__);
+	connsys_pm_device = pdev;
+
 	pm_runtime_enable(&pdev->dev);
 	dev_pm_syscore_device(&pdev->dev, true);
+
+	return 0;
+}
+
+int consys_clk_get_from_dts_mt6985(struct platform_device *pdev)
+{
+	int iret = 0;
+
+	pr_info("[%s] register connsys_pm_dev_drv_mt6985\n", __func__);
+
+	pr_info("[%s] deny OPP0\n", __func__);
+	mtk_dvfsrc_dynamic_opp0(VCOREOPP_GPS, true);
+
+	iret = platform_driver_register(&connsys_pm_dev_drv_mt6985);
+	if (iret)
+		pr_notice("[%s] register connsys_pm_dev_drv_mt6985 fail(%d)\n", __func__, iret);
+	else
+		pr_info("[%s] register connsys_pm_dev_drv_mt6985 succesfully\n", __func__);
+
+	mtk_dvfsrc_dynamic_opp0(VCOREOPP_GPS, false);
+	pr_info("[%s] allow OPP0\n", __func__);
 
 	return 0;
 }
@@ -61,7 +110,7 @@ unsigned int consys_soc_chipid_get_mt6985(void)
 int consys_platform_spm_conn_ctrl_mt6985(unsigned int enable)
 {
 	int ret = 0;
-	struct platform_device *pdev = get_consys_device();
+	struct platform_device *pdev = connsys_pm_device;
 
 	if (!pdev) {
 		pr_info("get_consys_device fail.\n");

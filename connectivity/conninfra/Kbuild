@@ -143,6 +143,7 @@ endif
 
 ifeq ($(CONFIG_MTK_COMBO_CHIP_CONSYS_6985),y)
 ifneq ($(wildcard $(PATH_TO_CONNINFRA_DRV)/conn_drv/connv2/platform/mt6985),)
+ccflags-y += -I$(srctree)/drivers/misc/mediatek/dvfsrc/
 ccflags-y += -I$(KO_CODE_PATH)/conn_drv/connv2/platform/mt6985/include
 ccflags-y += -I$(KO_CODE_PATH)/conn_drv/connv2/platform/mt6985/include/CODA
 endif

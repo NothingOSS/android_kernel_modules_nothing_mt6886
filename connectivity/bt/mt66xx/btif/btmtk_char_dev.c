@@ -438,7 +438,10 @@ static long BT_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long
 		*/
 		if (copy_from_user(ioc_buf, (uint8_t __user*)arg, IOCTL_BT_HOST_INTTRX_SIZE))
 			retval = -EFAULT;
-		else {
+		else if (ioc_buf[3] + 4 >= IOCTL_BT_HOST_INTTRX_SIZE) {
+			BTMTK_ERR("cmd size is larger than buffer, ignore");
+			retval = -EFAULT;
+		} else {
 			BTMTK_INFO_RAW(ioc_buf, ioc_buf[3] + 4, "%s: len[%d] TX: ", __func__, ioc_buf[3] + 4);
 			/* DynamicAdjustTxPower function */
 			if (ioc_buf[0] == 0x01 && ioc_buf[1] == 0x2D && ioc_buf[2] == 0xFC) {

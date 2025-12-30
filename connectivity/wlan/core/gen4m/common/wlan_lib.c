@@ -13805,7 +13805,7 @@ int wlanGetRxRateByBssid(struct GLUE_INFO *prGlueInfo, uint8_t ucBssIdx,
 	if (prStaRec) {
 		ucWlanIdx = prStaRec->ucWlanIndex;
 	} else {
-		DBGLOG(SW4, ERROR, "prStaRecOfAP is null\n");
+		DBGLOG(SW4, TRACE, "prStaRecOfAP is null\n");
 		return -1;
 	}
 

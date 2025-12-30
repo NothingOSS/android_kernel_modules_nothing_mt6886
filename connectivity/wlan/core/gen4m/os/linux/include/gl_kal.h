@@ -271,6 +271,10 @@ extern struct platform_device *g_prPlatDev;
 #define VOLT_INFO_MIN_VOLT_THRESH 2650 /* mV */
 #endif
 
+#if CFG_MODIFY_TX_POWER_BY_BAT_VOLT
+#define BACKOFF_VOLT 3550
+#define RESTORE_VOLT 3750
+#endif
 /*******************************************************************************
  *                             D A T A   T Y P E S
  *******************************************************************************
@@ -2396,8 +2400,8 @@ void kalBatNotifierUnReg(void);
 void kalNanHandleVendorEvent(struct ADAPTER *prAdapter, uint8_t *prBuffer);
 #endif
 
-int kalWlanUeventInit(void);
-void kalWlanUeventDeinit(void);
+void kalWlanUeventInit(struct GLUE_INFO *prGlueInfo);
+void kalWlanUeventDeinit(struct GLUE_INFO *prGlueInfo);
 u_int8_t kalSendUevent(const char *src);
 
 int _kalSnprintf(char *buf, size_t size, const char *fmt, ...);

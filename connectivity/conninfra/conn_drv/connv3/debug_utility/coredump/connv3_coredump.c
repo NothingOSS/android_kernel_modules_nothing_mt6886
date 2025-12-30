@@ -865,6 +865,10 @@ void connv3_coredump_deinit(void *handler)
 
 	if (handler == NULL)
 		return;
+	osal_lock_sleepable_lock(&ctx->ctx_lock);
+	conndump_netlink_unregister(ctx->conn_type);
+	osal_unlock_sleepable_lock(&ctx->ctx_lock);
+
 	osal_sleepable_lock_deinit(&ctx->ctx_lock);
 	connv3_dump_free(ctx);
 }

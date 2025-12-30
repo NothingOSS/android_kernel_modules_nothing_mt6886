@@ -8347,7 +8347,7 @@ void mtk_cfg_mgmt_frame_update(struct wiphy *wiphy,
 			if (!prGlueInfo->prAdapter->fgIsP2PRegistered ||
 				(prGlueInfo->prAdapter->rP2PNetRegState !=
 					ENUM_NET_REG_STATE_REGISTERED)) {
-				DBGLOG(P2P, WARN,
+				DBGLOG(P2P, TRACE,
 					"p2p net dev is not registered\n");
 				break;
 			}

@@ -528,6 +528,8 @@ void btmtk_connsys_log_register_event_cb(void (*func)(void));
 void btmtk_connsys_log_deinit(void);
 void btmtk_connsys_log_hold_sem(void);
 void btmtk_connsys_log_release_sem(void);
+void btmtk_btif_cif_mutex_lock(struct btmtk_dev *bdev);
+void btmtk_btif_cif_mutex_unlock(struct btmtk_dev *bdev);
 ssize_t btmtk_connsys_log_read_to_user(char __user *buf, size_t count);
 unsigned int btmtk_connsys_log_get_buf_size(void);
 int btmtk_cif_send_calibration(struct btmtk_dev *bdev);

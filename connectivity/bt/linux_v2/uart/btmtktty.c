@@ -358,8 +358,11 @@ int btmtk_uart_event_filter(struct btmtk_dev *bdev, struct sk_buff *skb)
 			BTMTK_DBG("%s, compare success", __func__);
 		} else {
 			BTMTK_INFO("%s compare fail", __func__);
-			BTMTK_INFO_RAW(event_need_compare, event_need_compare_len,
-				"%s: event_need_compare_len[%d]", __func__, event_need_compare_len);
+			if (event_need_compare_len <= sizeof(event_need_compare))
+				BTMTK_INFO_RAW(event_need_compare, event_need_compare_len,
+        	                    "%s: event_need_compare_len[%d]", __func__, event_need_compare_len);
+			else
+				BTMTK_INFO("%s: event_need_compare_len exceeds buffer size", __func__);
 			BTMTK_INFO_RAW(skb->data, skb->len, "%s: skb->data:", __func__);
 			return 0;
 		}
@@ -669,13 +672,13 @@ int btmtk_uart_send_wakeup_cmd(struct hci_dev *hdev)
 	}
 	if (is_mt6639(bdev->chip_id) || is_mt66xx(bdev->chip_id)) {
 		if (cif_dev->fw_dl_ready)
-			ret = btmtk_main_send_cmd(bdev, cmd+4, 1, event2, WAKEUP_EVT_LEN + 1,
+			ret = btmtk_main_send_cmd(bdev, cmd+4, 1, event2, sizeof(event2),
 					0, RETRY_TIMES, BTMTK_TX_PKT_SEND_NO_ASSERT);
 		else
-			ret = btmtk_main_send_cmd(bdev, cmd+4, 1, event, WAKEUP_EVT_LEN,
+			ret = btmtk_main_send_cmd(bdev, cmd+4, 1, event, sizeof(event),
 					0, RETRY_TIMES, BTMTK_TX_CMD_FROM_DRV);
 	} else
-		ret = btmtk_main_send_cmd(bdev, cmd, WAKEUP_CMD_LEN, event, WAKEUP_EVT_LEN,
+		ret = btmtk_main_send_cmd(bdev, cmd, WAKEUP_CMD_LEN, event, sizeof(event),
 				0, 0, BTMTK_TX_CMD_FROM_DRV);
 
 	if (ret < 0) {
@@ -2328,7 +2331,7 @@ static int btmtk_uart_driver_own(struct btmtk_dev *bdev)
 			int i = 0;
 			for (i = 0; i < 3; i++) {
 				/* no need to wait event */
-				ret = btmtk_main_send_cmd(bdev, wakeup_cmd, DRVOWN_CMD_LEN, NULL, 0,
+				ret = btmtk_main_send_cmd(bdev, wakeup_cmd, 1, NULL, 0,
 						DELAY_TIMES, SEND_RETRY_ONE_TIMES_500MS, BTMTK_TX_PKT_SEND_DIRECT_NO_ASSERT);
 				/* wait a while for fw wakeup */
 				usleep_range(6000, 6100);

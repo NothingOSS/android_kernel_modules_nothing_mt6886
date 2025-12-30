@@ -794,6 +794,7 @@ static void statsParsePktInfo(uint8_t *pucData, void *pvPacket,
 				"<RX> TDLS type %d, category %d, Action %d, Token %d\n",
 				pucEthBody[0], pucEthBody[1],
 				pucEthBody[2], pucEthBody[3]);
+			GLUE_SET_INDEPENDENT_PKT(pvPacket, TRUE);
 			GLUE_SET_PKT_FLAG(pvPacket, ENUM_PKT_TDLS);
 			break;
 		case EVENT_TX:

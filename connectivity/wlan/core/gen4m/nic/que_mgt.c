@@ -10260,6 +10260,9 @@ void qmHandleRxReorderWinShift(struct ADAPTER *prAdapter,
 		return;
 	}
 
+	if (ucTid >= CFG_RX_MAX_BA_TID_NUM)
+		return;
+
 	/* Check whether the BA agreement exists */
 	prReorderQueParm = prStaRec->aprRxReorderParamRefTbl[ucTid];
 	if (!prReorderQueParm) {

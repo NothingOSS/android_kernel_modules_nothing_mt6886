@@ -103,7 +103,7 @@ static int mtk_debug_mem_dump_init_mem_list(struct mtk_debug_mem_view_dump_data 
 {
 	int ret;
 
-	if (!kbase_file_inc_fops_count_unless_closed(kctx->kfile))
+	if (get_file_rcu(kctx->filp) == 0)
 		return -ENOENT;
 
 	memset(&(mem_dump_data->packet_header), 0, sizeof(mem_dump_data->packet_header));
@@ -169,7 +169,7 @@ static int mtk_debug_mem_dump_init_mem_list(struct mtk_debug_mem_view_dump_data 
 out:
 	while (mem_dump_data->node_count)
 		kbase_mem_phy_alloc_put(mem_dump_data->mem_view_nodes[--mem_dump_data->node_count].alloc);
-	kbase_file_dec_fops_count(kctx->kfile);
+	fput(kctx->filp);
 
 	return ret;
 }
@@ -181,7 +181,7 @@ static void mtk_debug_mem_dump_free_mem_list(struct mtk_debug_mem_view_dump_data
 
 	while (mem_dump_data->node_count)
 		kbase_mem_phy_alloc_put(mem_dump_data->mem_view_nodes[--mem_dump_data->node_count].alloc);
-	kbase_file_dec_fops_count(mem_dump_data->kctx->kfile);
+	fput(mem_dump_data->kctx->filp);
 	mem_dump_data->kctx = NULL;
 }
 

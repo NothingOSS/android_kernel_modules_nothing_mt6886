@@ -83,7 +83,7 @@ struct dump_netlink_ctx {
 	struct genl_family gnl_family;
 	unsigned int seqnum;
 	struct mutex nl_lock;
-	enum LINK_STATUS status;
+	atomic_t status;
 	void* coredump_ctx;
 	struct netlink_event_cb cb;
 };
@@ -116,6 +116,7 @@ CONN_COREDUMP_SYS_LIST(DECLARE_COREDUMP_NETLINK_OPS)
 struct dump_netlink_ctx g_netlink_ctx[] = {
 	CONN_COREDUMP_SYS_LIST_UPPER(DECLARE_COREDUMP_NETLINK_CTX)
 };
+static DEFINE_MUTEX(g_netlink_ctx_lock);
 
 /*******************************************************************************
 *                              F U N C T I O N S
@@ -130,6 +131,15 @@ static int conndump_nl_bind_internal(struct dump_netlink_ctx* ctx, struct sk_buf
 
 	if (info == NULL)
 		goto out;
+
+	if (ctx == NULL) {
+		pr_notice("[%s] Invalid context\n", __func__);
+		return -1;
+	}
+	if (atomic_read(&ctx->status) != LINK_STATUS_INIT_DONE) {
+		pr_notice("[%s] Invalid status\n", __func__);
+		return -1;
+	}
 
 	if (mutex_lock_killable(&ctx->nl_lock))
 		return -1;
@@ -162,10 +172,24 @@ out:
 
 static int conndump_nl_dump_end_internal(struct dump_netlink_ctx* ctx, struct sk_buff *skb, struct genl_info *info)
 {
-	if (ctx && ctx->cb.coredump_end) {
+	if (ctx == NULL) {
+		pr_notice("[%s] Invalid context\n", __func__);
+		return -1;
+	}
+	if (atomic_read(&ctx->status) != LINK_STATUS_INIT_DONE) {
+		pr_notice("[%s] Invalid status\n", __func__);
+		return -1;
+	}
+
+	if (mutex_lock_killable(&ctx->nl_lock))
+		return -1;
+
+	if (ctx->cb.coredump_end) {
 		pr_info("Get coredump end command, type=%d", ctx->conn_type);
 		ctx->cb.coredump_end(ctx->coredump_ctx);
 	}
+
+	mutex_unlock(&ctx->nl_lock);
 	return 0;
 }
 
@@ -191,19 +215,60 @@ int conndump_netlink_init(int conn_type, void* dump_ctx, struct netlink_event_cb
 		return -1;
 	}
 
-	ctx = &g_netlink_ctx[conn_type];
-	mutex_init(&ctx->nl_lock);
-	ret = genl_register_family(&ctx->gnl_family);
-	if (ret != 0) {
-		pr_err("%s(): GE_NELINK family registration fail (ret=%d)\n", __func__, ret);
-		return -2;
+	if (mutex_lock_killable(&g_netlink_ctx_lock)) {
+		pr_notice("[%s] Failed to lock mutex, type (%d)\n", __func__, conn_type);
+		return -1;
 	}
-	ctx->status = LINK_STATUS_INIT_DONE;
-	memset(ctx->bind_pid, 0, sizeof(ctx->bind_pid));
+
+	ctx = &g_netlink_ctx[conn_type];
+	if (atomic_read(&ctx->status) == LINK_STATUS_INIT) {
+		ret = genl_register_family(&ctx->gnl_family);
+		if (ret != 0) {
+			mutex_unlock(&g_netlink_ctx_lock);
+			pr_err("%s(): GE_NELINK family registration fail (ret=%d)\n", __func__, ret);
+			return -2;
+		}
+		memset(ctx->bind_pid, 0, sizeof(ctx->bind_pid));
+		mutex_init(&ctx->nl_lock);
+		atomic_set(&ctx->status, LINK_STATUS_INIT_DONE);
+	}
+	mutex_unlock(&g_netlink_ctx_lock);
+
+	// since context.nl_lock is inited, use it to protect the following code
+	mutex_lock(&ctx->nl_lock);
 	ctx->coredump_ctx = dump_ctx;
 	memcpy(&(ctx->cb), cb, sizeof(struct netlink_event_cb));
+	mutex_unlock(&ctx->nl_lock);
 
 	return ret;
+}
+
+/*****************************************************************************
+ * FUNCTION
+ *  conndump_netlink_unregister
+ * DESCRIPTION
+ *
+ * PARAMETERS
+ *
+ * RETURNS
+ *
+ *****************************************************************************/
+int conndump_netlink_unregister(int conn_type)
+{
+	struct dump_netlink_ctx* ctx;
+
+	ctx = &g_netlink_ctx[conn_type];
+	if (atomic_read(&ctx->status) != LINK_STATUS_INIT_DONE) {
+		pr_notice("[%s] netlink context is not initialized\n", __func__);
+		return -EINVAL;
+	}
+
+	mutex_lock(&ctx->nl_lock);
+	ctx->coredump_ctx = NULL;
+	memset(&(ctx->cb), 0, sizeof(struct netlink_event_cb));
+	mutex_unlock(&ctx->nl_lock);
+
+	return 0;
 }
 
 int conndump_netlink_msg_send(struct dump_netlink_ctx* ctx, char* tag, char* buf, unsigned int length, pid_t pid, unsigned int seq)
@@ -360,7 +425,7 @@ int conndump_netlink_send_to_native(int conn_type, char* tag, char* buf, unsigne
 	}
 
 	ctx = &g_netlink_ctx[conn_type];
-	if (ctx->status != LINK_STATUS_INIT_DONE) {
+	if (atomic_read(&ctx->status) != LINK_STATUS_INIT_DONE) {
 		pr_err("%s(): netlink should be init (type=%d).\n", __func__, conn_type);
 		return -2;
 	}

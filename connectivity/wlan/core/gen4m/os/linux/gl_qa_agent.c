@@ -70,6 +70,7 @@
 #include "gl_ate_agent.h"
 #include "gl_qa_agent.h"
 #include "gl_hook_api.h"
+#include "gl_wext_priv.h"
 #if KERNEL_VERSION(3, 8, 0) <= CFG80211_VERSION_CODE
 #include <uapi/linux/nl80211.h>
 #endif
@@ -9679,7 +9680,7 @@ int HQA_CMDHandler(struct net_device *prNetDev,
  * \retval 0						On success.
  */
 /*----------------------------------------------------------------------------*/
-int priv_qa_agent(struct net_device *prNetDev,
+int __priv_qa_agent(struct net_device *prNetDev,
 		  struct iw_request_info *prIwReqInfo,
 		  union iwreq_data *prIwReqData, char *pcExtra)
 {
@@ -9783,5 +9784,19 @@ ERROR1:
 	kfree(HqaCmdFrame);
 ERROR0:
 	return i4Status;
+}
+
+int priv_qa_agent(struct net_device *prNetDev,
+		  struct iw_request_info *prIwReqInfo,
+		  union iwreq_data *prIwReqData, char *pcExtra)
+{
+	DBGLOG(REQ, INFO, "cmd=%x, flags=%x\n",
+	     prIwReqInfo->cmd, prIwReqInfo->flags);
+	DBGLOG(REQ, INFO, "mode=%x, flags=%x\n",
+	     prIwReqData->mode, prIwReqData->data.flags);
+
+	return compat_priv(prNetDev, prIwReqInfo,
+	     prIwReqData, pcExtra, __priv_qa_agent);
+
 }
 #endif

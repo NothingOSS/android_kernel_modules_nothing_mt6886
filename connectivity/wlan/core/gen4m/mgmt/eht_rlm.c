@@ -688,7 +688,7 @@ void ehtRlmRecCapInfo(
 	 */
 	if (IE_SIZE(prEhtCap) < (sizeof(struct IE_EHT_CAP))) {
 		DBGLOG(SCN, WARN,
-			"EHT_CAP IE_LEN err(%d)!\n", IE_LEN(prEhtCap));
+			"EHT_CAP IE_SIZE err(%d)!\n", IE_SIZE(prEhtCap));
 		return;
 	}
 
@@ -715,7 +715,7 @@ void ehtRlmRecOperation(
 	 */
 	if (IE_SIZE(prEhtOp) < (sizeof(struct IE_EHT_OP))) {
 		DBGLOG(SCN, WARN,
-			"HE_OP IE_LEN err(%d)!\n", IE_LEN(prEhtOp));
+			"EHT_OP IE_SIZE err(%d)!\n", IE_SIZE(prEhtOp));
 		return;
 	}
 

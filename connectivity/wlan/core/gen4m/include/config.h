@@ -370,8 +370,12 @@
 #define CFG_SUPPORT_ICS                 0
 #define CFG_SUPPORT_PHY_ICS             0
 #else
+#ifndef CFG_SUPPORT_ICS
 #define CFG_SUPPORT_ICS                 1
+#endif
+#ifndef CFG_SUPPORT_PHY_ICS
 #define CFG_SUPPORT_PHY_ICS             1
+#endif
 #endif
 
 #ifndef CFG_SUPPORT_ICS_TIMESYNC

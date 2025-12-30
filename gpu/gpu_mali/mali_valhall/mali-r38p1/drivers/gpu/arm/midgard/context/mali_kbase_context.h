@@ -56,9 +56,8 @@ void kbase_context_debugfs_term(struct kbase_context *const kctx);
  *               BASEP_CONTEXT_CREATE_KERNEL_FLAGS.
  * @api_version: Application program interface version, as encoded in
  *               a single integer by the KBASE_API_VERSION macro.
- * @kfile:       Pointer to the object representing the /dev/malixx device
- *               file instance. Shall be passed as NULL for internally created
- *               contexts.
+ * @filp:        Pointer to the struct file corresponding to device file
+ *               /dev/malixx instance, passed to the file's open method.
  *
  * Up to one context can be created for each client that opens the device file
  * /dev/malixx. Context creation is deferred until a special ioctl() system call
@@ -70,7 +69,7 @@ struct kbase_context *
 kbase_create_context(struct kbase_device *kbdev, bool is_compat,
 	base_context_create_flags const flags,
 	unsigned long api_version,
-	struct kbase_file *const kfile);
+	struct file *filp);
 
 /**
  * kbase_destroy_context - Destroy a kernel base context.

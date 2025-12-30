@@ -155,6 +155,7 @@ void kalSetCpuFreq(int32_t freq, uint32_t set_mask)
 			if (!wReq)
 				break;
 			wReq->cpu = cpu;
+			wReq->qos_req.qos = NULL;
 
 			ret = freq_qos_add_request(&policy->constraints,
 				&wReq->qos_req, FREQ_QOS_MIN, DEFAULT_CPU_FREQ);

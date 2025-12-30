@@ -64,7 +64,7 @@ static struct genl_ops conndump_gnl_ops_array_##name[] = { \
 			.ops = conndump_gnl_ops_array_##dname, \
 			.n_ops = ARRAY_SIZE(conndump_gnl_ops_array_##dname), \
 		}, \
-		.status = LINK_STATUS_INIT, \
+		.status = ATOMIC_INIT(LINK_STATUS_INIT), \
 		.num_bind_process = 0, \
 		.seqnum = 0, \
 	},

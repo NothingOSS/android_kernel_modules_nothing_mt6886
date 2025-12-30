@@ -29,6 +29,7 @@ struct netlink_event_cb {
 ********************************************************************************
 */
 int conndump_netlink_init(int conn_type, void* dump_ctx, struct netlink_event_cb* cb);
+int conndump_netlink_unregister(int conn_type);
 int conndump_netlink_send_to_native(int conn_type, char* tag, char* buf, unsigned int length);
 
 
