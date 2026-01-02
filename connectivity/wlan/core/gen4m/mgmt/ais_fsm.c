@@ -5946,7 +5946,7 @@ void aisFsmRunEventJoinTimeout(struct ADAPTER *prAdapter,
 		DBGLOG(AIS, WARN, "EVENT- JOIN TIMEOUT\n");
 
 		prStaRec = aisGetTargetStaRec(prAdapter, ucBssIndex);
-		prStaRec->u2StatusCode = WLAN_STATUS_AUTH_TIMEOUT;
+		prStaRec->u2StatusCode = STATUS_CODE_AUTH_TIMEOUT;
 		eNextState = aisHandleJoinFailure(prAdapter,
 				prStaRec,
 				NULL, ucBssIndex);

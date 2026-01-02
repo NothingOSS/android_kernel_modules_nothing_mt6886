@@ -3857,21 +3857,35 @@ kalSecurityFrameClassifier(struct GLUE_INFO *prGlueInfo,
 	pucEapol = pucIpHdr;
 
 	if (u2EthType == ETH_P_1X) {
-
+		struct STA_RECORD *prStaRec;
 		ucEapolType = pucEapol[1];
 
-		/* Leave EAP to check */
-		ucEAPoLKey = aucLookAheadBuf[1 + ucEapOffset];
-		if (ucEAPoLKey != ETH_EAPOL_KEY)
-			prTxPktInfo->u2Flag |= BIT(ENUM_PKT_NON_PROTECTED_1X);
-		else {
-			WLAN_GET_FIELD_BE16(&aucLookAheadBuf[5 + ucEapOffset],
-					    &u2KeyInfo);
-			/* BIT3 is pairwise key bit */
-			DBGLOG(TX, INFO, "u2KeyInfo=%d\n", u2KeyInfo);
-			if (u2KeyInfo & BIT(3))
+		prStaRec = cnmGetStaRecByAddress(prGlueInfo->prAdapter,
+				GLUE_GET_PKT_BSS_IDX(prPacket),
+				aucLookAheadBuf);
+
+		if (((prStaRec && prStaRec->fgTransmitKeyExist &&
+				prStaRec->fgIsEapEncrypt) ||
+				(prStaRec && prStaRec->fgIsTxAllowed)) &&
+				(ucEAPoLKey != ETH_EAPOL_KEY)) {
+			/* Encrypt EAP frames if AIS connected and with a key */
+			DBGLOG(TX, INFO, "Encrypt EAP packets\n");
+		} else {
+			/* Leave EAP to check */
+			ucEAPoLKey = aucLookAheadBuf[1 + ucEapOffset];
+			if (ucEAPoLKey != ETH_EAPOL_KEY)
 				prTxPktInfo->u2Flag |=
 					BIT(ENUM_PKT_NON_PROTECTED_1X);
+			else {
+				WLAN_GET_FIELD_BE16(
+					&aucLookAheadBuf[5 + ucEapOffset],
+					&u2KeyInfo);
+				/* BIT3 is pairwise key bit */
+				DBGLOG(TX, INFO, "u2KeyInfo=%d\n", u2KeyInfo);
+				if (u2KeyInfo & BIT(3))
+					prTxPktInfo->u2Flag |=
+						BIT(ENUM_PKT_NON_PROTECTED_1X);
+			}
 		}
 
 		ucSeqNo = nicIncreaseTxSeqNum(prGlueInfo->prAdapter);
@@ -9925,7 +9939,7 @@ static uint32_t kalPerMonUpdate(struct ADAPTER *prAdapter)
 #endif /* CFG_RFB_TRACK */
 
 #define TEMP_LOG_TEMPLATE \
-	"ndevdrp:%s NAPI[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%u] " \
+	"ndevdrp:%s NAPI[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu] " \
 	RRO_LOG_TEMPLATE \
 	"RxReorder[%s] " \
 	RRB_TRACK_TEMPLATE \
@@ -10001,7 +10015,7 @@ static uint32_t kalPerMonUpdate(struct ADAPTER *prAdapter)
 		RX_GET_CNT(&prAdapter->rRxCtrl,	RX_DATA_REORDER_MISS_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl,	RX_DATA_REORDER_WITHIN_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_DATA_REORDER_AHEAD_COUNT),
-		RX_GET_CNT(&prAdapter->rRxCtrl,	RX_DATA_REORDER_BEHIND_COUNT),
+		RX_GET_CNT(&prAdapter->rRxCtrl, RX_DATA_REORDER_BEHIND_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_DROP_TOTAL_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_NO_STA_DROP_COUNT),
 		RX_GET_CNT(&prAdapter->rRxCtrl, RX_INACTIVE_BSS_DROP_COUNT),
@@ -12507,7 +12521,7 @@ uint8_t kalNapiInit(struct GLUE_INFO *prGlueInfo)
 	netif_napi_add(&prGlueInfo->dummy_dev, &prGlueInfo->napi,
 		kalNapiPoll, NAPI_POLL_WEIGHT);
 #if CFG_SUPPORT_RX_NAPI_THREADED
-		kalNapiThreadedInit(prGlueInfo);
+	kalNapiThreadedInit(prGlueInfo);
 #endif /* CFG_SUPPORT_RX_NAPI_THREADED */
 	DBGLOG(INIT, INFO, "Napi Init Done\n");
 	return 0;

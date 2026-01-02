@@ -99,7 +99,6 @@ uint8_t g_arTdlsLink[MAXNUM_TDLS_PEER] = {
  *******************************************************************************
  */
 static u_int8_t fgIsPtiTimeoutSkip = FALSE;
-static u_int8_t fgIsWaitForTxDone = FALSE;
 
 /*******************************************************************************
  *                                 M A C R O S
@@ -1099,9 +1098,6 @@ uint32_t TdlsexLinkMgt(struct ADAPTER *prAdapter,
 		return -EINVAL;
 	}
 
-	if (rResult == TDLS_STATUS_PENDING)
-		fgIsWaitForTxDone = TRUE;
-
 	DBGLOG(TDLS, INFO, "rResult=%d", rResult);
 
 	return rResult;
@@ -1157,6 +1153,9 @@ uint32_t TdlsexLinkOper(struct ADAPTER *prAdapter,
 					prBssInfo->ucBssIndex,
 					prCmd->aucPeerMac);
 				prStaRec->ucTdlsIndex = i;
+				prStaRec->fgTdlsIsNeedWaitTeardownTxDone =
+					FALSE;
+				prStaRec->fgTdlsIsNeedDisableLink = FALSE;
 #if CFG_SUPPORT_TDLS_P2P_AUTO
 				TdlsAutoSetupTarget(
 					prAdapter,
@@ -1174,7 +1173,11 @@ uint32_t TdlsexLinkOper(struct ADAPTER *prAdapter,
 		prStaRec = cnmGetTdlsPeerByAddress(prAdapter,
 				prBssInfo->ucBssIndex,
 				prCmd->aucPeerMac);
-
+		if (prStaRec->fgTdlsIsNeedWaitTeardownTxDone == TRUE) {
+			prStaRec->fgTdlsIsNeedDisableLink = TRUE;
+			break;
+		}
+		prStaRec->fgTdlsIsNeedDisableLink = FALSE;
 		g_arTdlsLink[prStaRec->ucTdlsIndex] = 0;
 		if (IS_DLS_STA(prStaRec))
 			cnmStaRecFree(prAdapter, prStaRec);
@@ -1420,7 +1423,9 @@ TdlsDataFrameSend_TearDown(struct ADAPTER *prAdapter,
 	/* 5. send the data frame */
 	kalWlanHardStartXmit(pvPacket, kalGetPacketDev(pvPacket));
 
-	return TDLS_STATUS_PENDING;
+	prStaRec->fgTdlsIsNeedWaitTeardownTxDone = TRUE;
+
+	return TDLS_STATUS_SUCCESS;
 }
 
 /*!
@@ -1624,7 +1629,7 @@ TdlsDataFrameSend_SETUP_REQ(struct ADAPTER *prAdapter,
 	/* 5. send the data frame */
 	kalWlanHardStartXmit(pvPacket, kalGetPacketDev(pvPacket));
 
-	return TDLS_STATUS_PENDING;
+	return TDLS_STATUS_SUCCESS;
 }
 
 uint32_t
@@ -1826,7 +1831,7 @@ TdlsDataFrameSend_SETUP_RSP(struct ADAPTER *prAdapter,
 	/* 5. send the data frame */
 	kalWlanHardStartXmit(pvPacket, kalGetPacketDev(pvPacket));
 
-	return TDLS_STATUS_PENDING;
+	return TDLS_STATUS_SUCCESS;
 }
 
 uint32_t
@@ -1950,7 +1955,7 @@ TdlsDataFrameSend_CONFIRM(struct ADAPTER *prAdapter,
 	/* 5. send the data frame */
 	kalWlanHardStartXmit(pvPacket, kalGetPacketDev(pvPacket));
 
-	return TDLS_STATUS_PENDING;
+	return TDLS_STATUS_SUCCESS;
 }
 
 /*
@@ -2055,7 +2060,7 @@ TdlsDataFrameSend_DISCOVERY_REQ(struct ADAPTER *prAdapter,
 	/* 5. send the data frame */
 	kalWlanHardStartXmit(pvPacket, kalGetPacketDev(pvPacket));
 
-	return TDLS_STATUS_PENDING;
+	return TDLS_STATUS_SUCCESS;
 }
 
 uint32_t
@@ -2448,14 +2453,36 @@ TdlsSendChSwControlCmd(struct ADAPTER *prAdapter,
  */
 /*----------------------------------------------------------------------------*/
 void TdlsHandleTxDoneStatus(struct ADAPTER *prAdapter,
+			struct MSDU_INFO *prMsduInfo,
 			enum ENUM_TX_RESULT_CODE rTxDoneStatus)
 {
-	DBGLOG(TDLS, INFO, "TdlsHandleTxDoneStatus=%d, fgIsWaitForTxDone=%d",
-				rTxDoneStatus, fgIsWaitForTxDone);
-	if (fgIsWaitForTxDone == TRUE) {
-		kalOidComplete(prAdapter->prGlueInfo, 0, 0,
-			WLAN_STATUS_SUCCESS);
-		fgIsWaitForTxDone = FALSE;
+	struct STA_RECORD *prStaRec;
+	uint8_t ucBssIndex = 0;
+	struct TDLS_CMD_LINK_OPER rCmdOper;
+
+	prStaRec = cnmGetTdlsPeerByAddress(prAdapter,
+					ucBssIndex,
+					prMsduInfo->aucEthDestAddr);
+	if (!prStaRec) {
+		DBGLOG(TDLS, INFO, " prStaRec is NULL");
+		return;
+	}
+
+	DBGLOG(TDLS, INFO, " rTxDoneStatus=%d, addr :"
+		MACSTR", IsNeedWaitTeardownTxDone=%d, IsNeedDisableLink=%d\n",
+		rTxDoneStatus, MAC2STR(prMsduInfo->aucEthDestAddr),
+		prStaRec->fgTdlsIsNeedWaitTeardownTxDone,
+		prStaRec->fgTdlsIsNeedDisableLink);
+
+	if (prStaRec->fgTdlsIsNeedWaitTeardownTxDone == TRUE) {
+		prStaRec->fgTdlsIsNeedWaitTeardownTxDone = FALSE;
+		if (prStaRec->fgTdlsIsNeedDisableLink == TRUE) {
+			rCmdOper.oper = TDLS_DISABLE_LINK;
+			kalMemCopy(rCmdOper.aucPeerMac,
+				prMsduInfo->aucEthDestAddr, 6);
+			rCmdOper.ucBssIdx = prStaRec->ucBssIndex;
+			TdlsexLinkOper(prAdapter, &rCmdOper, 0, NULL);
+		}
 	}
 }
 
