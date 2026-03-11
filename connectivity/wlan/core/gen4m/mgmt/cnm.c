@@ -2285,7 +2285,12 @@ struct BSS_INFO *cnmGetBssInfoAndInit(struct ADAPTER *prAdapter,
 		prBssInfo->ucLinkIndex = 0;
 #endif
 		/* initialize wlan id and status for keys */
-		prBssInfo->ucBMCWlanIndex = WTBL_RESERVED_ENTRY;
+		prBssInfo->ucBMCWlanIndex =
+			secPrivacySeekForBcEntry(prAdapter,
+				prBssInfo->ucBssIndex,
+				prBssInfo->aucOwnMacAddr,
+				STA_REC_INDEX_NOT_FOUND,
+				CIPHER_SUITE_NONE, 0xFF);
 		prBssInfo->wepkeyWlanIdx = WTBL_RESERVED_ENTRY;
 		for (i = 0; i < MAX_KEY_NUM; i++) {
 			prBssInfo->ucBMCWlanIndexSUsed[i] = FALSE;
@@ -2345,7 +2350,12 @@ omac_choosed:
 			prBssInfo->fgIsWmmInited = FALSE;
 #endif
 			/* initialize wlan id and status for keys */
-			prBssInfo->ucBMCWlanIndex = WTBL_RESERVED_ENTRY;
+			prBssInfo->ucBMCWlanIndex =
+				secPrivacySeekForBcEntry(prAdapter,
+					prBssInfo->ucBssIndex,
+					prBssInfo->aucOwnMacAddr,
+					STA_REC_INDEX_NOT_FOUND,
+					CIPHER_SUITE_NONE, 0xFF);
 			prBssInfo->wepkeyWlanIdx = WTBL_RESERVED_ENTRY;
 			prBssInfo->u4TxStopTh = prWifiVar->u4NetifStopTh;
 			prBssInfo->u4TxStartTh = prWifiVar->u4NetifStartTh;
@@ -2366,10 +2376,11 @@ omac_choosed:
 
 			kalMemZero(prBssInfo->aucBSSID, MAC_ADDR_LEN);
 
-			log_dbg(CNM, INFO, "bss=%d,type=%d,omac=%d\n",
+			log_dbg(CNM, INFO, "bss=%d,type=%d,omac=%d,bmc=%d\n",
 				prBssInfo->ucBssIndex,
 				prBssInfo->eNetworkType,
-				prBssInfo->ucOwnMacIndex);
+				prBssInfo->ucOwnMacIndex,
+				prBssInfo->ucBMCWlanIndex);
 
 			prOutBssInfo = prBssInfo;
 			break;
@@ -2398,6 +2409,8 @@ void cnmFreeBssInfo(struct ADAPTER *prAdapter,
 #if CFG_SUPPORT_DFS
 	cnmTimerStopTimer(prAdapter, &prBssInfo->rCsaTimer);
 #endif
+
+	secRemoveBssBcEntry(prAdapter, prBssInfo);
 
 	prBssInfo->fgIsInUse = FALSE;
 }

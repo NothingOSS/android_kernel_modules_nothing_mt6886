@@ -5556,6 +5556,11 @@ uint32_t wlanoidHandleRttRequest(struct ADAPTER *prAdapter,
 			 void *pvSetBuffer, uint32_t u4SetBufferLen,
 			 uint32_t *pu4SetInfoLen);
 
+uint32_t
+wlanoidQueryLteSafeChannel(struct ADAPTER *prAdapter,
+			void *pvQueryBuffer, uint32_t u4QueryBufferLen,
+			uint32_t *pu4QueryInfoLen);
+
 #if (CONFIG_WLAN_SERVICE == 1)
 uint32_t
 wlanoidListMode(struct ADAPTER *prAdapter,

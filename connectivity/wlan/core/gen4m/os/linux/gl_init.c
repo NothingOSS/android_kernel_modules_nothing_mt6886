@@ -1610,6 +1610,20 @@ static const struct wiphy_vendor_command
 		.policy = VENDOR_CMD_RAW_DATA
 #endif
 	},
+	{
+		{
+			.vendor_id = OUI_MTK,
+			.subcmd = MTK_SUBCMD_GET_USABLE_CHANNEL
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV |
+					WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = mtk_cfg80211_vendor_get_usable_channel
+#if KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
+		,
+		.policy = mtk_usable_channel_policy,
+		.maxattr = WIFI_ATTRIBUTE_USABLE_CHANNEL_MAX
+#endif
+	},
 #if CFG_SUPPORT_P2P_LISTEN_OFFLOAD
 	{
 		{

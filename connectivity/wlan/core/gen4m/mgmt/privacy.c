@@ -916,6 +916,24 @@ void secPrivacyFreeForEntry(struct ADAPTER *prAdapter, uint8_t ucEntry)
 
 }
 
+void secPrivacyResetForEntry(struct ADAPTER *prAdapter, uint8_t ucEntry)
+{
+	struct WLAN_TABLE *prWtbl;
+
+	if (ucEntry >= WTBL_SIZE)
+		return;
+
+	DBGLOG(RSN, TRACE, "reset entry %d\n", ucEntry);
+
+	prWtbl = prAdapter->rWifiVar.arWtbl;
+
+	if (prWtbl[ucEntry].ucUsed) {
+		prWtbl[ucEntry].ucKeyId = 0xff;
+		kalMemZero(prWtbl[ucEntry].aucMacAddr, MAC_ADDR_LEN);
+		prWtbl[ucEntry].ucStaIndex = STA_REC_INDEX_NOT_FOUND;
+	}
+}
+
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief This routine is used free a STA WLAN entry.
@@ -965,49 +983,19 @@ void secPrivacyFreeSta(struct ADAPTER *prAdapter,
  */
 /*----------------------------------------------------------------------------*/
 void secRemoveBssBcEntry(struct ADAPTER *prAdapter,
-			 struct BSS_INFO *prBssInfo, u_int8_t fgRoam)
+			 struct BSS_INFO *prBssInfo)
 {
-	int i;
 
 	if (!prBssInfo)
 		return;
 
 	DBGLOG(RSN, TRACE, "remove all the key related with BSS!");
 
-	if (fgRoam) {
-		struct CONNECTION_SETTINGS *prConnSettings =
-			aisGetConnSettings(prAdapter,
-			prBssInfo->ucBssIndex);
-
-		if (IS_BSS_AIS(prBssInfo) &&
-		    prBssInfo->prStaRecOfAP
-		    && (prConnSettings->eAuthMode >= AUTH_MODE_WPA &&
-			prConnSettings->eAuthMode != AUTH_MODE_WPA_NONE)) {
-
-			for (i = 0; i < MAX_KEY_NUM; i++) {
-				if (prBssInfo->ucBMCWlanIndexSUsed[i])
-					secPrivacyFreeForEntry(prAdapter,
-						prBssInfo->ucBMCWlanIndexS[i]);
-
-			prBssInfo->ucBMCWlanIndexSUsed[i] = FALSE;
-			prBssInfo->ucBMCWlanIndexS[i] = WTBL_RESERVED_ENTRY;
-
-			}
-
-			prBssInfo->fgBcDefaultKeyExist = FALSE;
-			prBssInfo->ucBcDefaultKeyIdx = 0xff;
-		}
-	} else {
-		/* According to discussion, it's ok to change to
-		 * reserved_entry here so that the entry is _NOT_ freed at all.
-		 * In this way, the same BSS(ucBssIndex) could reuse the same
-		 * entry next time in secPrivacySeekForBcEntry(), and we could
-		 * see the following log: "[Wlan index]: Reuse entry ...".
-		 */
-		prBssInfo->ucBMCWlanIndex = WTBL_RESERVED_ENTRY;
+	if (!secCheckWTBLwlanIdxInUseByOther(prAdapter,
+		prBssInfo->ucBMCWlanIndex, prBssInfo->ucBssIndex)) {
 		secPrivacyFreeForEntry(prAdapter, prBssInfo->ucBMCWlanIndex);
+		prBssInfo->ucBMCWlanIndex = WTBL_RESERVED_ENTRY;
 	}
-
 }
 
 /*----------------------------------------------------------------------------*/
@@ -1084,8 +1072,8 @@ secPrivacySeekForBcEntry(struct ADAPTER *prAdapter,
 				if (!fgCheckKeyId) {
 					ucEntry = i;
 					DBGLOG(RSN, TRACE,
-						"[Wlan index]: Reuse entry #%d for open/wep/wpi\n",
-						i);
+						"[Wlan index]: Reuse entry #%d for alg=%d\n",
+						i, ucAlg);
 					break;
 				}
 
@@ -1402,6 +1390,12 @@ void secPostUpdateAddr(struct ADAPTER *prAdapter,
 		       struct BSS_INFO *prBssInfo)
 {
 	struct WLAN_TABLE *prWtbl;
+
+	if (prBssInfo->ucBMCWlanIndex < WTBL_SIZE) {
+		prWtbl = &prAdapter->rWifiVar.arWtbl[prBssInfo->ucBMCWlanIndex];
+		kalMemCopy(prWtbl->aucMacAddr,
+			prBssInfo->aucOwnMacAddr, MAC_ADDR_LEN);
+	}
 
 	if (IS_BSS_AIS(prBssInfo) && prBssInfo->prStaRecOfAP) {
 		struct CONNECTION_SETTINGS *prConnSettings =

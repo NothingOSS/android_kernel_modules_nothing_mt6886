@@ -2003,7 +2003,8 @@ struct CMD_SET_DOMAIN_INFO {
 
 	uint8_t uc2G4Bandwidth;	/* CONFIG_BW_20_40M or CONFIG_BW_20M */
 	uint8_t uc5GBandwidth;	/* CONFIG_BW_20_40M or CONFIG_BW_20M */
-	uint8_t aucReserved[2];
+	uint8_t ucRegCat;
+	uint8_t aucReserved[1];
 };
 
 #if CFG_SUPPORT_PWR_LIMIT_COUNTRY

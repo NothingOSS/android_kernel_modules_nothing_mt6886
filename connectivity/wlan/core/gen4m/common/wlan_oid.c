@@ -2495,6 +2495,28 @@ wlanoidSetRemoveWep(struct ADAPTER *prAdapter,
 	return WLAN_STATUS_PENDING;
 } /* wlanoidSetRemoveWep */
 
+#if CFG_SUPPORT_802_11W
+static void assignPmfFlag(struct STA_RECORD *prStaRec,
+	struct BSS_INFO *prBssInfo,
+	struct AIS_SPECIFIC_BSS_INFO *prAisSpecBssInfo,
+	struct CMD_802_11_KEY *prCmdKey)
+{
+	if (IS_BSS_AIS(prBssInfo)) {
+		prCmdKey->ucMgmtProtection =
+			prAisSpecBssInfo->fgMgmtProtection;
+		DBGLOG(RSN, INFO,
+			"Ais PMF flag = %d\n",
+			prAisSpecBssInfo->fgMgmtProtection);
+	} else {
+		DBGLOG_LIMITED(RSN, INFO,
+			"Client PMF flag = %d\n",
+			prStaRec->rPmfCfg.fgApplyPmf);
+		prCmdKey->ucMgmtProtection =
+			prStaRec->rPmfCfg.fgApplyPmf;
+	}
+}
+#endif
+
 #if (CFG_SUPPORT_802_11BE_MLO == 1)
 uint32_t
 wlanoidPresetLinkId(struct ADAPTER *prAdapter,
@@ -2780,272 +2802,143 @@ wlanoidSetAddKeyImpl(struct ADAPTER *prAdapter, void *pvSetBuffer,
 			}
 #endif
 		}
-	} else { /* Legacy windows NDIS no cipher info */
-#if 0
-		if (prNewKey->u4KeyLength == 5) {
-			prCmdKey->ucAlgorithmId = CIPHER_SUITE_WEP40;
-		} else if (prNewKey->u4KeyLength == 13) {
-			prCmdKey->ucAlgorithmId = CIPHER_SUITE_WEP104;
-		} else if (prNewKey->u4KeyLength == 16) {
-			if (prAdapter->rWifiVar.rConnSettings.eAuthMode <
-			    AUTH_MODE_WPA)
-				prCmdKey->ucAlgorithmId = CIPHER_SUITE_WEP128;
-			else {
-				if (IS_BSS_AIS(prBssInfo)) {
-#if CFG_SUPPORT_802_11W
-					if (prCmdKey->ucKeyId >= 4) {
-						struct AIS_SPECIFIC_BSS_INFO
-							*prAisSpecBssInfo;
-
-						prCmdKey->ucAlgorithmId =
-							CIPHER_SUITE_BIP;
-						prAisSpecBssInfo =
-							&prAdapter->rWifiVar
-							.rAisSpecificBssInfo;
-						prAisSpecBssInfo
-							->fgBipKeyInstalled =
-							TRUE;
-					} else
-#endif
-					{
-				prCmdKey->ucAlgorithmId = CIPHER_SUITE_CCMP;
-				if (rsnCheckPmkidCandicate(prAdapter)) {
-					DBGLOG(RSN, TRACE,
-					  "Add key: Prepare a timer to indicate candidate PMKID\n");
-					cnmTimerStopTimer(prAdapter,
-					  &prAisSpecBssInfo
-						->rPreauthenticationTimer);
-					cnmTimerStartTimer(prAdapter,
-					  &prAisSpecBssInfo
-						->rPreauthenticationTimer,
-					SEC_TO_MSEC(
-					  WAIT_TIME_IND_PMKID_CANDICATE_SEC));
-					}
-				}
-					}
-			}
-		} else if (prNewKey->u4KeyLength == 32) {
-			if (IS_BSS_AIS(prBssInfo)) {
-				if (prAdapter->rWifiVar.rConnSettings.eAuthMode
-				    == AUTH_MODE_WPA_NONE) {
-					if (prAdapter->rWifiVar.rConnSettings
-						.eEncStatus ==
-						ENUM_ENCRYPTION2_ENABLED) {
-						prCmdKey->ucAlgorithmId =
-							CIPHER_SUITE_TKIP;
-					} else if (prAdapter->rWifiVar
-						.rConnSettings.eEncStatus ==
-						ENUM_ENCRYPTION3_ENABLED) {
-						prCmdKey->ucAlgorithmId =
-							CIPHER_SUITE_CCMP;
-						prCmdKey->ucKeyLen =
-							CCMP_KEY_LEN;
-					}
-				} else {
-					prCmdKey->ucAlgorithmId =
-						CIPHER_SUITE_TKIP;
-					kalMemCopy(
-						prAdapter->rWifiVar
-							.rAisSpecificBssInfo
-							.aucRxMicKey,
-						&prCmdKey->aucKeyMaterial[16],
-						MIC_KEY_LEN);
-					kalMemCopy(
-						prAdapter->rWifiVar
-							.rAisSpecificBssInfo
-							.aucTxMicKey,
-						&prCmdKey->aucKeyMaterial[24],
-						MIC_KEY_LEN);
-			if (0 /* Todo::GCMP & GCMP-BIP ? */) {
-				if (rsnCheckPmkidCandicate(prAdapter)) {
-					DBGLOG(RSN, TRACE,
-					  "Add key: Prepare a timer to indicate candidate PMKID\n");
-					cnmTimerStopTimer(prAdapter,
-					  &prAisSpecBssInfo->
-						rPreauthenticationTimer);
-					cnmTimerStartTimer(prAdapter,
-					  &prAisSpecBssInfo->
-						rPreauthenticationTimer,
-					  SEC_TO_MSEC(
-					    WAIT_TIME_IND_PMKID_CANDICATE_SEC));
-				}
-			} else {
-				prCmdKey->ucAlgorithmId = CIPHER_SUITE_TKIP;
-			}
-		}
-}
-#endif
 	}
-	{
+
 #if CFG_SUPPORT_TDLS
-		prTmpStaRec = cnmGetStaRecByAddress(prAdapter,
-				prBssInfo->ucBssIndex, prNewKey->arBSSID);
-		if (prTmpStaRec) {
-			if (IS_DLS_STA(prTmpStaRec)) {
-				prStaRec = prTmpStaRec;
+	prTmpStaRec = cnmGetStaRecByAddress(prAdapter,
+			prBssInfo->ucBssIndex, prNewKey->arBSSID);
+	if (prTmpStaRec) {
+		if (IS_DLS_STA(prTmpStaRec)) {
+			prStaRec = prTmpStaRec;
 
-				/*128 ,TODO  GCMP 256 */
-				prCmdKey->ucAlgorithmId = CIPHER_SUITE_CCMP;
+			prCmdKey->ucAlgorithmId = CIPHER_SUITE_CCMP;
 
-				kalMemCopy(prCmdKey->aucPeerAddr,
-					prStaRec->aucMacAddr, MAC_ADDR_LEN);
-			}
+			kalMemCopy(prCmdKey->aucPeerAddr,
+				prStaRec->aucMacAddr, MAC_ADDR_LEN);
 		}
+	}
 #endif
 
+	if (0) {
 #if CFG_SUPPORT_802_11W
-		/* AP PMF */
-		if (prCmdKey->ucAlgorithmId == CIPHER_SUITE_BIP ||
-		    prCmdKey->ucAlgorithmId == CIPHER_SUITE_BIP_GMAC_256) {
-			if (prCmdKey->ucIsAuthenticator) {
-				DBGLOG_LIMITED(RSN, INFO,
-				"Authenticator BIP bssid:%d\n",
-				prBssInfo->ucBssIndex);
-
+	} else if (prCmdKey->ucAlgorithmId == CIPHER_SUITE_BIP ||
+		   prCmdKey->ucAlgorithmId == CIPHER_SUITE_BIP_GMAC_256) {
+		if (prCmdKey->ucIsAuthenticator) {
+			DBGLOG_LIMITED(RSN, LOUD,
+			"Authenticator BIP bssid:%d\n",
+			prBssInfo->ucBssIndex);
+			prCmdKey->ucWlanIndex =
+				secPrivacySeekForBcEntry(prAdapter,
+					prBssInfo->ucBssIndex,
+					prBssInfo->aucOwnMacAddr,
+					STA_REC_INDEX_NOT_FOUND,
+					prCmdKey->ucAlgorithmId,
+					prCmdKey->ucKeyId);
+		} else {
+			if (prBssInfo->prStaRecOfAP) {
 				prCmdKey->ucWlanIndex =
-					secPrivacySeekForBcEntry(prAdapter,
-						prBssInfo->ucBssIndex,
-						prBssInfo->aucOwnMacAddr,
-						STA_REC_INDEX_NOT_FOUND,
-						prCmdKey->ucAlgorithmId,
-						prCmdKey->ucKeyId);
-			} else {
-				if (prBssInfo->prStaRecOfAP) {
-					prCmdKey->ucWlanIndex =
-					    secPrivacySeekForBcEntry(prAdapter,
-						    prBssInfo->ucBssIndex,
-						    prBssInfo->prStaRecOfAP
-							->aucMacAddr,
-						    prBssInfo->prStaRecOfAP
-							->ucIndex,
-						    prCmdKey->ucAlgorithmId,
-						    prCmdKey->ucKeyId);
-					kalMemCopy(prCmdKey->aucPeerAddr,
-						prBssInfo->prStaRecOfAP
-						->aucMacAddr, MAC_ADDR_LEN);
+				    secPrivacySeekForBcEntry(prAdapter,
+					    prBssInfo->ucBssIndex,
+					    prBssInfo->prStaRecOfAP
+						->aucMacAddr,
+					    prBssInfo->prStaRecOfAP
+						->ucIndex,
+					    prCmdKey->ucAlgorithmId,
+					    prCmdKey->ucKeyId);
+				kalMemCopy(prCmdKey->aucPeerAddr,
+					prBssInfo->prStaRecOfAP
+					->aucMacAddr, MAC_ADDR_LEN);
 
 #if (CFG_WIFI_IGTK_GTK_SEPARATE == 1)
-					prBssInfo->ucBMCWlanIndexS[
-						prCmdKey->ucKeyId] =
-						prCmdKey->ucWlanIndex;
-					prBssInfo->ucBMCWlanIndexSUsed[
-						prCmdKey->ucKeyId] = TRUE;
-					DBGLOG_LIMITED(RSN, INFO,
-					       "BMCWlanIndex kid = %d, index = %d\n",
-					       prCmdKey->ucKeyId,
-					       prCmdKey->ucWlanIndex);
+				prBssInfo->ucBMCWlanIndexS[
+					prCmdKey->ucKeyId] =
+					prCmdKey->ucWlanIndex;
+				prBssInfo->ucBMCWlanIndexSUsed[
+					prCmdKey->ucKeyId] = TRUE;
+				DBGLOG_LIMITED(RSN, INFO,
+				       "BMCWlanIndex kid = %d, index = %d\n",
+				       prCmdKey->ucKeyId,
+				       prCmdKey->ucWlanIndex);
 #endif
 				}
 			}
 
-			DBGLOG_LIMITED(RSN, INFO, "BIP BC wtbl index:%d\n",
-				prCmdKey->ucWlanIndex);
-		} else
+		DBGLOG(RSN, TRACE, "BIP BC wtbl index:%d\n",
+			prCmdKey->ucWlanIndex);
 #endif
-		if (1) {
-			if (prStaRec) {
-				if (prCmdKey->ucKeyType) {	/* RSN STA */
-					struct WLAN_TABLE *prWtbl;
+	} else if (prStaRec) {
+		if (prCmdKey->ucKeyType) {
+			struct WLAN_TABLE *prWtbl;
 
-					prWtbl = prAdapter->rWifiVar.arWtbl;
-					prWtbl[prStaRec->ucWlanIndex].ucKeyId =
-						prCmdKey->ucKeyId;
-					prCmdKey->ucWlanIndex =
-						prStaRec->ucWlanIndex;
+			prWtbl = prAdapter->rWifiVar.arWtbl;
+			prWtbl[prStaRec->ucWlanIndex].ucKeyId =
+				prCmdKey->ucKeyId;
+			prCmdKey->ucWlanIndex =
+				prStaRec->ucWlanIndex;
 
-					/* wait for CMD Done ? */
-					prStaRec->fgTransmitKeyExist = TRUE;
+			prStaRec->fgTransmitKeyExist = TRUE;
 
-					kalMemCopy(prCmdKey->aucPeerAddr,
-						prNewKey->arBSSID,
-						MAC_ADDR_LEN);
+			kalMemCopy(prCmdKey->aucPeerAddr,
+				prNewKey->arBSSID,
+				MAC_ADDR_LEN);
 #if CFG_SUPPORT_802_11W
-					/* AP PMF */
-					DBGLOG_LIMITED(RSN, INFO,
-						"Assign client PMF flag = %d\n",
-						prStaRec->rPmfCfg.fgApplyPmf);
-					prCmdKey->ucMgmtProtection =
-						prStaRec->rPmfCfg.fgApplyPmf;
+			assignPmfFlag(prStaRec,
+				prBssInfo,
+				prAisSpecBssInfo,
+				prCmdKey);
 #endif
-				} else {
-					ASSERT(FALSE);
-				}
-			} else { /* Overwrite the old one for AP and STA WEP */
-				if (prBssInfo->prStaRecOfAP) {
-					DBGLOG_LIMITED(RSN, INFO, "AP REC\n");
-					prCmdKey->ucWlanIndex =
-					    secPrivacySeekForBcEntry(
-						prAdapter,
-						prBssInfo->ucBssIndex,
-						prBssInfo->prStaRecOfAP
-						    ->aucMacAddr,
-						prBssInfo->prStaRecOfAP
-						    ->ucIndex,
-						prCmdKey->ucAlgorithmId,
-						prCmdKey->ucKeyId);
-					kalMemCopy(prCmdKey->aucPeerAddr,
-						   prBssInfo->prStaRecOfAP
-						   ->aucMacAddr,
-						   MAC_ADDR_LEN);
-				} else {
-					DBGLOG_LIMITED(RSN, INFO,
-						"!AP && !STA REC\n");
-					prCmdKey->ucWlanIndex =
-						secPrivacySeekForBcEntry(
-						prAdapter,
-						prBssInfo->ucBssIndex,
-						prBssInfo->aucOwnMacAddr,
-						STA_REC_INDEX_NOT_FOUND,
-						prCmdKey->ucAlgorithmId,
-						prCmdKey->ucKeyId);
-					kalMemCopy(prCmdKey->aucPeerAddr,
-						prBssInfo->aucOwnMacAddr,
-						MAC_ADDR_LEN);
-				}
-				if (prCmdKey->ucKeyId >= MAX_KEY_NUM) {
-					DBGLOG_LIMITED(RSN, ERROR,
-						"prCmdKey->ucKeyId [%u] overrun\n",
-						prCmdKey->ucKeyId);
-					return WLAN_STATUS_FAILURE;
-				}
-				if (fgNoHandshakeSec) {
-					/* WEP: STA and AP */
-					prBssInfo->wepkeyWlanIdx =
-						prCmdKey->ucWlanIndex;
-					prBssInfo->wepkeyUsed[
-						prCmdKey->ucKeyId] = TRUE;
-				} else if (!prBssInfo->prStaRecOfAP) {
-					/* AP WPA/RSN */
-					prBssInfo->ucBMCWlanIndexS[
-						prCmdKey->ucKeyId] =
-						prCmdKey->ucWlanIndex;
-					prBssInfo->ucBMCWlanIndexSUsed[
-						prCmdKey->ucKeyId] = TRUE;
-				} else {
-					/* STA WPA/RSN, should not have tx but
-					 * no sta record
-					 */
-					prBssInfo->ucBMCWlanIndexS[
-						prCmdKey->ucKeyId] =
-						prCmdKey->ucWlanIndex;
-					prBssInfo->ucBMCWlanIndexSUsed[
-						prCmdKey->ucKeyId] = TRUE;
-					DBGLOG_LIMITED(RSN, INFO,
-					       "BMCWlanIndex kid = %d, index = %d\n",
-					       prCmdKey->ucKeyId,
-					       prCmdKey->ucWlanIndex);
-				}
-				if (prCmdKey->ucTxKey) { /* */
-					prBssInfo->fgBcDefaultKeyExist = TRUE;
-					prBssInfo->ucBcDefaultKeyIdx =
-							prCmdKey->ucKeyId;
-				}
-			}
+		} else {
+			ASSERT(FALSE);
+		}
+	} else {
+		if (prBssInfo->prStaRecOfAP) {
+			prCmdKey->ucWlanIndex =
+			    secPrivacySeekForBcEntry(
+				prAdapter,
+				prBssInfo->ucBssIndex,
+				prBssInfo->prStaRecOfAP->aucMacAddr,
+				prBssInfo->prStaRecOfAP->ucIndex,
+				prCmdKey->ucAlgorithmId,
+				prCmdKey->ucKeyId);
+			kalMemCopy(prCmdKey->aucPeerAddr,
+				   prBssInfo->prStaRecOfAP->aucMacAddr,
+				   MAC_ADDR_LEN);
+		} else {
+			prCmdKey->ucWlanIndex =
+				secPrivacySeekForBcEntry(
+				prAdapter,
+				prBssInfo->ucBssIndex,
+				prBssInfo->aucOwnMacAddr,
+				STA_REC_INDEX_NOT_FOUND,
+				prCmdKey->ucAlgorithmId,
+				prCmdKey->ucKeyId);
+			kalMemCopy(prCmdKey->aucPeerAddr,
+				prBssInfo->aucOwnMacAddr,
+				MAC_ADDR_LEN);
+		}
+		if (prCmdKey->ucKeyId >= MAX_KEY_NUM) {
+			DBGLOG_LIMITED(RSN, ERROR,
+				"prCmdKey->ucKeyId [%u] overrun\n",
+				prCmdKey->ucKeyId);
+			return WLAN_STATUS_FAILURE;
+		}
+		if (fgNoHandshakeSec) {
+			prBssInfo->wepkeyWlanIdx = prCmdKey->ucWlanIndex;
+			prBssInfo->wepkeyUsed[prCmdKey->ucKeyId] = TRUE;
+		} else {
+			prBssInfo->ucBMCWlanIndexS[prCmdKey->ucKeyId] =
+				prCmdKey->ucWlanIndex;
+			prBssInfo->ucBMCWlanIndexSUsed[prCmdKey->ucKeyId] =
+				TRUE;
+		}
+		if (prCmdKey->ucTxKey) {
+			prBssInfo->fgBcDefaultKeyExist = TRUE;
+			prBssInfo->ucBcDefaultKeyIdx = prCmdKey->ucKeyId;
 		}
 	}
-#if 1
+
 	DBGLOG(RSN, INFO, "Add key to wlanIdx %d,BSS=%d," MACSTR
-		       "Tx=%d,type=%d,Auth=%d,cipher=%d,keyid=%d,keylen=%d\n",
+		       " Tx=%d,type=%d,Auth=%d,cipher=%d,keyid=%d,keylen=%d\n",
 		       prCmdKey->ucWlanIndex, prCmdKey->ucBssIdx,
 		       MAC2STR(prCmdKey->aucPeerAddr), prCmdKey->ucTxKey,
 		       prCmdKey->ucKeyType, prCmdKey->ucIsAuthenticator,
@@ -3062,7 +2955,7 @@ wlanoidSetAddKeyImpl(struct ADAPTER *prAdapter, void *pvSetBuffer,
 		       prBssInfo->ucBMCWlanIndexSUsed[prCmdKey->ucKeyId],
 		       prBssInfo->ucBMCWlanIndexS[prCmdKey->ucKeyId]);
 	}
-#endif
+
 	if (prAisSpecBssInfo)
 		prAisSpecBssInfo->ucKeyAlgorithmId = prCmdKey->ucAlgorithmId;
 
@@ -3302,8 +3195,12 @@ wlanSetRemoveKey(struct ADAPTER *prAdapter,
 			}
 			ASSERT(prBssInfo->wepkeyWlanIdx < WTBL_SIZE);
 			ucRemoveBCKeyAtIdx = prBssInfo->wepkeyWlanIdx;
-			secPrivacyFreeForEntry(prAdapter,
-					prBssInfo->wepkeyWlanIdx);
+			if (ucRemoveBCKeyAtIdx == prBssInfo->ucBMCWlanIndex)
+				secPrivacyResetForEntry(prAdapter,
+						ucRemoveBCKeyAtIdx);
+			else
+				secPrivacyFreeForEntry(prAdapter,
+						ucRemoveBCKeyAtIdx);
 			prBssInfo->wepkeyWlanIdx = WTBL_RESERVED_ENTRY;
 		} else {
 			DBGLOG(RSN, INFO, "Remove group key id = %d",
@@ -3321,9 +3218,13 @@ wlanSetRemoveKey(struct ADAPTER *prAdapter,
 						u4KeyIndex] < WTBL_SIZE);
 				ucRemoveBCKeyAtIdx =
 					prBssInfo->ucBMCWlanIndexS[u4KeyIndex];
-
-				secPrivacyFreeForEntry(prAdapter,
-				    prBssInfo->ucBMCWlanIndexS[u4KeyIndex]);
+				if (ucRemoveBCKeyAtIdx ==
+						prBssInfo->ucBMCWlanIndex)
+					secPrivacyResetForEntry(prAdapter,
+							ucRemoveBCKeyAtIdx);
+				else
+					secPrivacyFreeForEntry(prAdapter,
+							ucRemoveBCKeyAtIdx);
 				prBssInfo->ucBMCWlanIndexSUsed[u4KeyIndex]
 					= FALSE;
 				prBssInfo->ucBMCWlanIndexS[u4KeyIndex]
@@ -18194,3 +18095,44 @@ uint32_t wlanoidListMode(struct ADAPTER *prAdapter,
 }
 #endif
 
+uint32_t
+wlanoidQueryLteSafeChannel(struct ADAPTER *prAdapter,
+			void *pvQueryBuffer, uint32_t u4QueryBufferLen,
+			uint32_t *pu4QueryInfoLen)
+{
+	struct CMD_GET_LTE_SAFE_CHN rQuery_LTE_SAFE_CHN = { 0 };
+
+	DBGLOG(P2P, TRACE, "query Lte safe channel bitmap");
+
+	if (!prAdapter) {
+		DBGLOG(P2P, ERROR, "no adapter found");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	if (!pu4QueryInfoLen) {
+		DBGLOG(P2P, ERROR, "zero query info len");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	if (u4QueryBufferLen && !pvQueryBuffer) {
+		DBGLOG(P2P, ERROR, "null query buffer with buffer len");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	*pu4QueryInfoLen = sizeof(struct PARAM_GET_CHN_INFO);
+
+	if (u4QueryBufferLen < sizeof(struct PARAM_GET_CHN_INFO))
+		return WLAN_STATUS_BUFFER_TOO_SHORT;
+
+	return wlanSendSetQueryCmd(prAdapter,
+				CMD_ID_GET_LTE_CHN,
+				FALSE,
+				TRUE,
+				TRUE,
+				nicCmdEventQueryLteSafeChn,
+				nicOidCmdTimeoutCommon,
+				sizeof(struct CMD_GET_LTE_SAFE_CHN),
+				(uint8_t *)&rQuery_LTE_SAFE_CHN,
+				(struct PARAM_GET_CHN_INFO *)pvQueryBuffer,
+				u4QueryBufferLen);
+}

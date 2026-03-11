@@ -590,3 +590,6 @@ uint32_t p2pFuncCalculateP2p_IELenForOwe(struct ADAPTER *prAdapter,
 void p2pFuncGenerateP2p_IEForOwe(struct ADAPTER *prAdapter,
 	struct MSDU_INFO *prMsduInfo);
 
+u_int8_t p2pFuncIsLteSafeChnl(enum ENUM_BAND eBand, uint8_t ucChnlNum,
+				 uint32_t *pau4SafeChnl);
+

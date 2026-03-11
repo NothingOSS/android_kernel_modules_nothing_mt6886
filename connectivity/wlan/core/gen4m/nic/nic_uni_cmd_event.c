@@ -1300,6 +1300,7 @@ uint32_t nicUniCmdSetDomainV1(struct ADAPTER *ad,
 	uni_cmd->uc2G4Bandwidth = cmd->uc2G4Bandwidth;
 	uni_cmd->uc5GBandwidth = cmd->uc5GBandwidth;
 	uni_cmd->uc6GBandwidth = cmd->uc5GBandwidth; // TODO: uni cmd, 6g
+	uni_cmd->ucRegCat = cmd->ucRegCat;
 
 	tag = (struct UNI_CMD_DOMAIN_SET_INFO_DOMAIN_SUBBAND *)
 		uni_cmd->aucTlvBuffer;
@@ -1321,6 +1322,15 @@ uint32_t nicUniCmdSetDomainV1(struct ADAPTER *ad,
 	}
 
 	LINK_INSERT_TAIL(&info->rUniCmdList, &entry->rLinkEntry);
+
+	DBGLOG(RLM, TRACE,
+	       "[UNI]Domain: uni_CC=%c%c, cmd_CC=%c%c, uni_Reg=%d, cmd_Reg=%d\n",
+	       (uni_cmd->u4CountryCode & 0xff00) >> 8,
+	       (uni_cmd->u4CountryCode & 0x00ff),
+	       ((cmd->u2CountryCode & 0xff00) >> 8),
+	       (cmd->u2CountryCode & 0x00ff),
+	       uni_cmd->ucRegCat,
+	       cmd->ucRegCat);
 
 	return WLAN_STATUS_SUCCESS;
 }

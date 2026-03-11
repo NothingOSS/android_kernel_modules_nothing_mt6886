@@ -1408,10 +1408,17 @@ TdlsDataFrameSend_TearDown(struct ADAPTER *prAdapter,
 
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID,
 		   prBssInfo->aucBSSID, 6);
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator,
-		   prBssInfo->aucOwnMacAddr, 6);
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
-		   pPeerMac, 6);
+	if (prBssInfo->prStaRecOfAP->flgTdlsIsInitiator) {
+		kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator,
+			prBssInfo->aucOwnMacAddr, 6);
+		kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
+			pPeerMac, 6);
+	} else {
+		kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator,
+			pPeerMac, 6);
+		kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
+			prBssInfo->aucOwnMacAddr, 6);
+	}
 
 	u4IeLen = IE_SIZE(pPkt);
 	pPkt += u4IeLen;
@@ -1610,6 +1617,7 @@ TdlsDataFrameSend_SETUP_REQ(struct ADAPTER *prAdapter,
 	LR_TDLS_FME_FIELD_FILL(3);
 
 	/* 3.17 Link Identifier */
+	prBssInfo->prStaRecOfAP->flgTdlsIsInitiator = TRUE;
 	TDLS_LINK_IDENTIFIER_IE(pPkt)->ucId = ELEM_ID_LINK_IDENTIFIER;
 	TDLS_LINK_IDENTIFIER_IE(pPkt)->ucLength = 18;
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID,
@@ -1800,6 +1808,7 @@ TdlsDataFrameSend_SETUP_RSP(struct ADAPTER *prAdapter,
 		LR_TDLS_FME_FIELD_FILL(3);
 
 		/* 3.18 Link Identifier */
+		prBssInfo->prStaRecOfAP->flgTdlsIsInitiator = FALSE;
 		TDLS_LINK_IDENTIFIER_IE(pPkt)->ucId = ELEM_ID_LINK_IDENTIFIER;
 		TDLS_LINK_IDENTIFIER_IE(pPkt)->ucLength = 18;
 

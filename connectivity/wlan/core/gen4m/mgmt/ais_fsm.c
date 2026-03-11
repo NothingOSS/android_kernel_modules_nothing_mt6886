@@ -474,8 +474,6 @@ void aisInitBssInfo(struct ADAPTER *prAdapter,
 		prAisBssInfo->prBeacon->ucStaRecIndex = 0xFF;
 	}
 
-	prAisBssInfo->ucBMCWlanIndex = WTBL_RESERVED_ENTRY;
-
 	for (i = 0; i < MAX_KEY_NUM; i++) {
 		prAisBssInfo->ucBMCWlanIndexS[i] = WTBL_RESERVED_ENTRY;
 		prAisBssInfo->ucBMCWlanIndexSUsed[i] = FALSE;
@@ -5211,13 +5209,6 @@ void aisUpdateBssInfoForJOIN(struct ADAPTER *prAdapter,
 	secPostUpdateAddr(prAdapter,
 		aisGetAisBssInfo(prAdapter, ucBssIndex));
 
-	/* 4 <4.3> Sync with firmware for BSS-INFO */
-	prAisBssInfo->ucBMCWlanIndex = secPrivacySeekForBcEntry(
-				prAdapter, prAisBssInfo->ucBssIndex,
-				prAisBssInfo->aucOwnMacAddr,
-				prStaRec->ucIndex,
-				CIPHER_SUITE_NONE, 0xFF);
-
 	nicUpdateBss(prAdapter, ucBssIndex);
 
 	/* 4 <4.4> *DEFER OPERATION* nicPmIndicateBssConnected()
@@ -6923,7 +6914,6 @@ void aisFsmRoamingDisconnectPrevAP(struct ADAPTER *prAdapter,
 		prTargetStaRec->ucBssIndex = (prAdapter->ucHwBssIdNum + 1);
 	nicUpdateBss(prAdapter, prAisBssInfo->ucBssIndex);
 
-	secRemoveBssBcEntry(prAdapter, prAisBssInfo, TRUE);
 	if (prTargetStaRec)
 		prTargetStaRec->ucBssIndex = prAisBssInfo->ucBssIndex;
 	/* before deactivate previous AP, should move its pending MSDUs

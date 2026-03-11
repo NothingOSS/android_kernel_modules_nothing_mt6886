@@ -2151,21 +2151,23 @@ void nicCmdEventQueryLteSafeChn(struct ADAPTER *prAdapter,
 	prLteSafeChnInfo = (struct PARAM_GET_CHN_INFO *)
 			prCmdInfo->pvInformationBuffer;
 
-	if (prLteSafeChnInfo->ucRoleIndex >= BSS_P2P_NUM) {
-		ASSERT(FALSE);
-		kalMemFree(prLteSafeChnInfo, VIR_MEM_TYPE,
-				sizeof(struct PARAM_GET_CHN_INFO));
-		return;
-	}
-	prP2pRoleFsmInfo = P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter,
-			prLteSafeChnInfo->ucRoleIndex);
-	if (prP2pRoleFsmInfo == NULL) {
-		DBGLOG(P2P, ERROR,
-			"Corresponding P2P Role FSM empty: %d.\n",
-			prLteSafeChnInfo->ucRoleIndex);
-		kalMemFree(prLteSafeChnInfo, VIR_MEM_TYPE,
-				sizeof(struct PARAM_GET_CHN_INFO));
-		return;
+	if (!prCmdInfo->fgIsOid) {
+		if (prLteSafeChnInfo->ucRoleIndex >= BSS_P2P_NUM) {
+			ASSERT(FALSE);
+			kalMemFree(prLteSafeChnInfo, VIR_MEM_TYPE,
+					sizeof(struct PARAM_GET_CHN_INFO));
+			return;
+		}
+		prP2pRoleFsmInfo = P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter,
+				prLteSafeChnInfo->ucRoleIndex);
+		if (prP2pRoleFsmInfo == NULL) {
+			DBGLOG(P2P, ERROR,
+				"Corresponding P2P Role FSM empty: %d.\n",
+				prLteSafeChnInfo->ucRoleIndex);
+			kalMemFree(prLteSafeChnInfo, VIR_MEM_TYPE,
+					sizeof(struct PARAM_GET_CHN_INFO));
+			return;
+		}
 	}
 
 	/* Statistics from FW is valid */
@@ -2188,12 +2190,19 @@ void nicCmdEventQueryLteSafeChn(struct ADAPTER *prAdapter,
 	} else {
 		DBGLOG(NIC, ERROR, "FW's event is NOT valid.\n");
 	}
-	p2pFunProcessAcsReport(prAdapter,
-			prLteSafeChnInfo->ucRoleIndex,
-			prLteSafeChnInfo,
-			&(prP2pRoleFsmInfo->rAcsReqInfo));
-	kalMemFree(prLteSafeChnInfo, VIR_MEM_TYPE,
-			sizeof(struct PARAM_GET_CHN_INFO));
+
+	if (prCmdInfo->fgIsOid) {
+		DBGLOG(NIC, INFO, "oid lteSafeCmd, set oid complete.\n");
+		kalOidComplete(prAdapter->prGlueInfo, prCmdInfo,
+			sizeof(struct PARAM_GET_CHN_INFO), WLAN_STATUS_SUCCESS);
+	} else {
+		p2pFunProcessAcsReport(prAdapter,
+				prLteSafeChnInfo->ucRoleIndex,
+				prLteSafeChnInfo,
+				&(prP2pRoleFsmInfo->rAcsReqInfo));
+		kalMemFree(prLteSafeChnInfo, VIR_MEM_TYPE,
+				sizeof(struct PARAM_GET_CHN_INFO));
+	}
 }
 
 void nicEventRddPulseDump(struct ADAPTER *prAdapter,

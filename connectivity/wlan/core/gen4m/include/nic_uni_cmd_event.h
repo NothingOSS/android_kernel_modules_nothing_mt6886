@@ -2002,7 +2002,7 @@ struct UNI_CMD_DOMAIN_SET_INFO {
 	uint8_t  uc2G4Bandwidth; /* CONFIG_BW_20_40M or CONFIG_BW_20M */
 	uint8_t  uc5GBandwidth;  /* CONFIG_BW_20_40M or CONFIG_BW_20M */
 	uint8_t  uc6GBandwidth;
-	uint8_t  aucReserved[1];
+	uint8_t  ucRegCat;
 	/* tlv */
 	uint8_t  aucTlvBuffer[0];
 	/**< the TLVs included in this field:

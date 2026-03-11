@@ -2278,11 +2278,8 @@ uint32_t nicActivateNetworkEx(struct ADAPTER *prAdapter,
 	COPY_MAC_ADDR(rCmdActivateCtrl.aucBssMacAddr,
 		      prBssInfo->aucOwnMacAddr);
 
-	prBssInfo->ucBMCWlanIndex =
-		secPrivacySeekForBcEntry(prAdapter, prBssInfo->ucBssIndex,
-					 prBssInfo->aucOwnMacAddr,
-					 STA_REC_INDEX_NOT_FOUND,
-					 CIPHER_SUITE_NONE, 0xFF);
+	secPostUpdateAddr(prAdapter, prBssInfo);
+
 #if CFG_SUPPORT_LIMITED_PKT_PID
 	nicTxInitPktPID(prAdapter, prBssInfo->ucBMCWlanIndex);
 #endif /* CFG_SUPPORT_LIMITED_PKT_PID */
@@ -2389,8 +2386,6 @@ uint32_t nicDeactivateNetworkEx(struct ADAPTER *prAdapter,
 	if (fgClearStaRec) {
 		prBssInfo->eHwBandIdx = ENUM_BAND_AUTO;
 		prBssInfo->eBackupHwBandIdx = ENUM_BAND_AUTO;
-
-		secRemoveBssBcEntry(prAdapter, prBssInfo, FALSE);
 
 		/* free all correlated station records */
 		cnmStaFreeAllStaByNetwork(prAdapter, ucBssIndex,
@@ -2625,20 +2620,6 @@ uint32_t nicUpdateBssEx(struct ADAPTER *prAdapter,
 				prBssInfo->ucBcDefaultKeyIdx];
 	} else
 		rCmdSetBssInfo.ucBMCWlanIndex = prBssInfo->ucBMCWlanIndex;
-
-	if ((prBssInfo->eConnectionState ==
-		MEDIA_STATE_DISCONNECTED ||
-		prBssInfo->eConnectionState ==
-	    MEDIA_STATE_ROAMING_DISC_PREV) &&
-	    secCheckWTBLwlanIdxInUseByOther(prAdapter,
-		rCmdSetBssInfo.ucBMCWlanIndex, ucBssIndex)) {
-		rCmdSetBssInfo.ucBMCWlanIndex =
-			secPrivacySeekForBcEntry(
-				prAdapter, prBssInfo->ucBssIndex,
-				prBssInfo->aucOwnMacAddr,
-				STA_REC_INDEX_NOT_FOUND,
-				CIPHER_SUITE_NONE, 0xFF);
-	}
 
 	DBGLOG(RSN, TRACE, "Update BSS BMC WlanIdx %u\n",
 	       rCmdSetBssInfo.ucBMCWlanIndex);

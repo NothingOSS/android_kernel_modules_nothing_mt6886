@@ -64,7 +64,6 @@ nanDevInit(struct ADAPTER *prAdapter, uint8_t ucIdx) {
 		prnanBssInfo->ucSSIDLen = 0;
 		prnanBssInfo->fgIsQBSS = 1;
 		prnanBssInfo->eConnectionState = MEDIA_STATE_DISCONNECTED;
-		prnanBssInfo->ucBMCWlanIndex = WTBL_RESERVED_ENTRY;
 		prnanBssInfo->ucOpRxNss = wlanGetSupportNss(
 			prAdapter, prnanBssInfo->ucBssIndex);
 

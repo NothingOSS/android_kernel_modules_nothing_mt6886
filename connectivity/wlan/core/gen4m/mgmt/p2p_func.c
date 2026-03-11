@@ -1847,15 +1847,6 @@ SKIP_START_RDD:
 			prBssInfo->ucConfigAdHocAPMode,
 			prBssInfo->ucNonHTBasicPhyType);
 
-#if 0
-		if (prBssInfo->ucBMCWlanIndex >= WTBL_SIZE) {
-			prBssInfo->ucBMCWlanIndex =
-			    secPrivacySeekForBcEntry(prAdapter,
-					prBssInfo->ucBssIndex,
-					prBssInfo->aucBSSID, 0xff,
-					CIPHER_SUITE_NONE, 0xff);
-		}
-#endif
 		nicQmUpdateWmmParms(prAdapter, prBssInfo->ucBssIndex);
 #endif /* CFG_SUPPORT_AAA */
 
@@ -9094,4 +9085,38 @@ void p2pFuncGenerateP2p_IEForOwe(struct ADAPTER *prAdapter,
 		   prP2pSpecBssInfo->pucDHIEBuf,
 		   prP2pSpecBssInfo->ucDHIELen);
 	prMsduInfo->u2FrameLength += prP2pSpecBssInfo->ucDHIELen;
+}
+
+u_int8_t p2pFuncIsLteSafeChnl(enum ENUM_BAND eBand, uint8_t ucChnlNum,
+				 uint32_t *pau4SafeChnl)
+{
+	uint32_t u4SafeChInfo_2g = BITS(0, 31);
+	uint32_t u4SafeChInfo_5g_0 = BITS(0, 31);
+	uint32_t u4SafeChInfo_5g_1 = BITS(0, 31);
+	uint32_t u4SafeChInfo_6g = BITS(0, 31);
+
+	if (pau4SafeChnl) {
+		u4SafeChInfo_2g = pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_2G4];
+		u4SafeChInfo_5g_0 = pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_5G_0];
+		u4SafeChInfo_5g_1 = pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_5G_1];
+		u4SafeChInfo_6g = pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_6G];
+	}
+
+	if (eBand == BAND_2G4 && ucChnlNum <= 14) {
+		if (u4SafeChInfo_2g & BIT(ucChnlNum))
+			return TRUE;
+	} else if (eBand == BAND_5G && ucChnlNum >= 36 && ucChnlNum <= 144) {
+		if (u4SafeChInfo_5g_0 & BIT((ucChnlNum - 36) / 4))
+			return TRUE;
+	} else if (eBand == BAND_5G && ucChnlNum >= 149 && ucChnlNum <= 181) {
+		if (u4SafeChInfo_5g_1 & BIT((ucChnlNum - 149) / 4))
+			return TRUE;
+#if (CFG_SUPPORT_WIFI_6G == 1)
+	} else if (eBand == BAND_6G) {
+		if (u4SafeChInfo_6g & BIT((ucChnlNum - 5) / 16))
+			return TRUE;
+#endif
+	}
+
+	return FALSE;
 }

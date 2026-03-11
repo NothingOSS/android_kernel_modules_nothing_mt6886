@@ -307,6 +307,14 @@ const struct nla_policy nla_get_csi_policy[
 };
 #endif
 
+const struct nla_policy mtk_usable_channel_policy[
+	WIFI_ATTRIBUTE_USABLE_CHANNEL_MAX + 1] = {
+	[WIFI_ATTRIBUTE_USABLE_CHANNEL_BAND] = {.type = NLA_U32},
+	[WIFI_ATTRIBUTE_USABLE_CHANNEL_IFACE] = {.type = NLA_U32},
+	[WIFI_ATTRIBUTE_USABLE_CHANNEL_FILTER] = {.type = NLA_U32},
+	[WIFI_ATTRIBUTE_USABLE_CHANNEL_MAX_SIZE] = {.type = NLA_U32},
+};
+
 /*******************************************************************************
  *                           P R I V A T E   D A T A
  *******************************************************************************
@@ -316,7 +324,7 @@ const struct nla_policy nla_get_csi_policy[
  *                                 M A C R O S
  *******************************************************************************
  */
-
+#define GO_SAP_IFTYPE ((IFACE_MODE_P2P_GO) | IFACE_MODE_SOFTAP)
 /*******************************************************************************
  *                   F U N C T I O N   D E C L A R A T I O N S
  *******************************************************************************
@@ -3976,6 +3984,365 @@ end:
 	kfree_skb(skb);
 	return i4Status;
 }
+
+static u_int8_t isIfaceTypeSupportChannel(struct ADAPTER *prAdapter,
+	uint32_t iface, uint32_t filter, enum ENUM_BAND eBand,
+	uint8_t ucChannelNum, uint32_t u4channel_freq, uint8_t fgDFS,
+	uint32_t *pau4SafeChnl)
+{
+	uint16_t u2CountryCode = prAdapter->rWifiVar.u2CountryCode;
+	u_int8_t result = TRUE;
+#if (CFG_SUPPORT_WIFI_6G == 1)
+#endif
+
+	if (iface & (IFACE_MODE_STA | IFACE_MODE_P2P_CLIENT | IFACE_MODE_TDLS |
+		IFACE_MODE_NAN)) {
+	} else if (iface & GO_SAP_IFTYPE) {
+		if (eBand == BAND_5G) {
+			if (rlmDomainIsIndoorChannel(
+				prAdapter,
+				BAND_5G,
+				ucChannelNum)) {
+				DBGLOG(REQ, TRACE,
+					"skip freq %d, indoor channel\n",
+					u4channel_freq);
+				result = FALSE;
+			} else if (fgDFS) {
+				DBGLOG(REQ, TRACE,
+					"skip freq %d, dfs channel\n",
+					u4channel_freq);
+				result = FALSE;
+			} else if ((u2CountryCode == COUNTRY_CODE_TW) &&
+				(u4channel_freq >= 5180 &&
+					u4channel_freq <= 5260)) {
+				DBGLOG(REQ, TRACE,
+					"skip freq %d, country=%d\n",
+					u4channel_freq, u2CountryCode);
+				result = FALSE;
+			}
+		}
+#if (CFG_SUPPORT_WIFI_6G == 1)
+		else if (eBand == BAND_6G) {
+			if (!IS_6G_PSC_CHANNEL(ucChannelNum)) {
+				DBGLOG(REQ, TRACE,
+					"skip freq %d, not psc channel\n",
+					u4channel_freq);
+				result = FALSE;
+			}
+			else if (u4channel_freq >= 6435) {
+				DBGLOG(REQ, TRACE,
+					"skip freq %d >= 6435\n",
+					u4channel_freq);
+				result = FALSE;
+			}
+		}
+#endif
+
+		if ((filter & CELLULAR_COEXISTENCE) && pau4SafeChnl) {
+			if (!p2pFuncIsLteSafeChnl(
+				eBand,
+				ucChannelNum,
+				pau4SafeChnl)) {
+				DBGLOG(REQ, TRACE,
+					"skip freq %d, lte safe chnl\n",
+					u4channel_freq);
+				result = FALSE;
+			}
+		}
+	}
+	return result;
+}
+
+int mtk_cfg80211_vendor_get_usable_channel(
+	struct wiphy *wiphy, struct wireless_dev *wdev,
+	const void *data, int data_len)
+{
+	struct GLUE_INFO *prGlueInfo = wlanGetGlueInfo();
+	struct ADAPTER *prAdapter;
+	struct sk_buff *skb = NULL;
+	struct ANDROID_USABLE_CHANNEL_ARRAY *pr_channel_array = NULL;
+	int32_t i4Status = 0;
+	struct nlattr *attr;
+	uint32_t band_mask = 0;
+	uint32_t iface;
+	uint32_t iface_type = 0;
+	uint32_t iface_type_copy = 0;
+	uint32_t supported_iface_mask;
+	uint32_t filter = 0;
+	uint32_t max_size = 0;
+	uint32_t rStatus = WLAN_STATUS_SUCCESS;
+	struct nlattr *tb[WIFI_ATTRIBUTE_USABLE_CHANNEL_MAX + 1] = {};
+	struct RF_CHANNEL_INFO *aucChannelList;
+	uint8_t i, usable_channel_nums;
+	uint32_t u4channel_freq;
+	uint8_t ucNumOfChannel = 0;
+	struct PARAM_GET_CHN_INFO *prLteSafeChn = NULL;
+	uint32_t *pau4SafeChnl = NULL;
+	uint32_t u4SafeChnlInfo_2g;
+	uint32_t u4SafeChnlInfo_5g_0;
+	uint32_t u4SafeChnlInfo_5g_1;
+#if (CFG_SUPPORT_WIFI_6G == 1)
+	uint32_t u4SafeChnlInfo_6g;
+#endif
+	uint32_t u4BufLen;
+	uint32_t idx;
+	u_int8_t result;
+
+
+	if (NLA_PARSE(tb, WIFI_ATTRIBUTE_USABLE_CHANNEL_MAX, data, data_len,
+			mtk_usable_channel_policy)) {
+		DBGLOG(REQ, ERROR, "parse acs attr fail.\n");
+		rStatus = -EINVAL;
+		goto end;
+	}
+
+	if (!tb[WIFI_ATTRIBUTE_USABLE_CHANNEL_BAND]) {
+		DBGLOG(REQ, ERROR, "attr channel band failed.\n");
+		rStatus = -EINVAL;
+		goto end;
+	}
+	band_mask = nla_get_u32(tb[WIFI_ATTRIBUTE_USABLE_CHANNEL_BAND]);
+
+	if (!tb[WIFI_ATTRIBUTE_USABLE_CHANNEL_IFACE]) {
+		DBGLOG(REQ, ERROR, "attr channel iface failed.\n");
+		rStatus = -EINVAL;
+		goto end;
+	}
+	iface_type = nla_get_u32(tb[WIFI_ATTRIBUTE_USABLE_CHANNEL_IFACE]);
+
+	if (!tb[WIFI_ATTRIBUTE_USABLE_CHANNEL_MAX_SIZE]) {
+		DBGLOG(REQ, ERROR, "attr channel max size failed.\n");
+		rStatus = -EINVAL;
+		goto end;
+	}
+	max_size = nla_get_u32(tb[WIFI_ATTRIBUTE_USABLE_CHANNEL_MAX_SIZE]);
+
+	if (!tb[WIFI_ATTRIBUTE_USABLE_CHANNEL_FILTER]) {
+		DBGLOG(REQ, ERROR, "attr channel filter failed.\n");
+		rStatus = -EINVAL;
+		goto end;
+	}
+	filter = nla_get_u32(tb[WIFI_ATTRIBUTE_USABLE_CHANNEL_FILTER]);
+
+	DBGLOG(REQ, TRACE,
+		"band_mask = 0x%x, iface_type = 0x%x, max_size = 0x%x, filter = 0x%x\n"
+		, band_mask, iface_type, max_size, filter);
+
+	if (!prGlueInfo) {
+		DBGLOG(REQ, WARN, "Invalid glue info\n");
+		i4Status = -EFAULT;
+		goto end;
+	}
+
+	if (prGlueInfo->u4ReadyFlag == 0) {
+		DBGLOG(REQ, WARN, "driver is not ready\n");
+		return -EFAULT;
+	}
+
+	prAdapter = prGlueInfo->prAdapter;
+
+	attr = (struct nlattr *)data;
+
+	aucChannelList = (struct RF_CHANNEL_INFO *)
+		kalMemAlloc(sizeof(struct RF_CHANNEL_INFO)*MAX_CHN_NUM,
+			VIR_MEM_TYPE);
+	if (!aucChannelList) {
+		DBGLOG(REQ, ERROR,
+			"Can not alloc memory for rf channel info\n");
+		return -ENOMEM;
+	}
+	kalMemZero(aucChannelList,
+		sizeof(struct RF_CHANNEL_INFO)*MAX_CHN_NUM);
+	pr_channel_array = (struct ANDROID_USABLE_CHANNEL_ARRAY *)
+		kalMemAlloc(
+		(sizeof(struct ANDROID_USABLE_CHANNEL_UNIT)*
+		MAX_CHN_NUM +
+		sizeof(struct ANDROID_USABLE_CHANNEL_ARRAY)),
+		VIR_MEM_TYPE);
+
+	if (!pr_channel_array) {
+		DBGLOG(REQ, ERROR,
+			"Can not alloc memory for stats info\n");
+		i4Status = -ENOMEM;
+		goto end;
+	}
+
+	if (filter & CELLULAR_COEXISTENCE) {
+		prLteSafeChn = kalMemZAlloc(sizeof(struct PARAM_GET_CHN_INFO),
+			VIR_MEM_TYPE);
+		if (!prLteSafeChn) {
+			DBGLOG(REQ, TRACE, "allocate prLteSafeChn failed\n");
+		} else {
+			rStatus = kalIoctl(prGlueInfo,
+				wlanoidQueryLteSafeChannel, prLteSafeChn,
+				sizeof(struct PARAM_GET_CHN_INFO), &u4BufLen);
+			pau4SafeChnl = prLteSafeChn->rLteSafeChnList.
+				au4SafeChannelBitmask;
+
+			u4SafeChnlInfo_2g =
+				pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_2G4];
+			u4SafeChnlInfo_5g_0 =
+				pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_5G_0];
+			u4SafeChnlInfo_5g_1 =
+				pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_5G_1];
+#if (CFG_SUPPORT_WIFI_6G == 1)
+			u4SafeChnlInfo_6g =
+				pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_6G];
+#endif
+
+			if (!u4SafeChnlInfo_2g && !u4SafeChnlInfo_5g_0 &&
+				!u4SafeChnlInfo_5g_1
+#if (CFG_SUPPORT_WIFI_6G == 1)
+				&& !u4SafeChnlInfo_6g
+#endif
+			) {
+				DBGLOG(P2P, WARN,
+					"No safe chnl, reset bitmap\n");
+				pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_2G4] =
+					BITS(0, 31);
+				pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_5G_0] =
+					BITS(0, 31);
+				pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_5G_1] =
+					BITS(0, 31);
+#if (CFG_SUPPORT_WIFI_6G == 1)
+				pau4SafeChnl[ENUM_SAFE_CH_MASK_BAND_6G] =
+					BITS(0, 31);
+#endif
+			}
+		}
+	}
+
+
+	rlmDomainGetChnlList(prAdapter, BAND_NULL, FALSE,
+		MAX_CHN_NUM, &ucNumOfChannel, aucChannelList);
+
+	for (i = 0; i < ucNumOfChannel; i++) {
+		u4channel_freq = nicChannelNum2Freq(
+				aucChannelList[i].ucChannelNum,
+				aucChannelList[i].eBand) / 1000;
+		if (u4channel_freq == 0)
+			continue;
+		pr_channel_array->channel_array[i].channel_freq =
+			u4channel_freq;
+		if (aucChannelList[i].eBand == BAND_2G4 &&
+			!(band_mask & WIFIBAND_BAND_24GHZ)) {
+			DBGLOG(REQ, TRACE,
+				"skip 2G freq %d due to  band_mask=%d\n"
+				, u4channel_freq, band_mask);
+			continue;
+		}
+		if (aucChannelList[i].eBand == BAND_5G &&
+			!(band_mask & WIFIBAND_BAND_5GHZ)) {
+			DBGLOG(REQ, TRACE,
+				"skip 5G freq %d due to band_mask=%d\n"
+				, u4channel_freq, band_mask);
+			continue;
+		}
+
+#if (CFG_SUPPORT_WIFI_6G == 1)
+		if (aucChannelList[i].eBand == BAND_6G &&
+			!(band_mask & WIFIBAND_BAND_6GHZ)) {
+			DBGLOG(REQ, TRACE,
+				"skip 6G freq %d due to band_mask=%d\n"
+				, u4channel_freq, band_mask);
+			continue;
+		}
+#endif
+
+		if (aucChannelList[i].eBand == BAND_2G4)
+			pr_channel_array->channel_array[i].channel_width =
+				ANDROID_WIFI_CHAN_WIDTH_20;
+		else if (aucChannelList[i].eBand == BAND_5G) {
+			if (aucChannelList[i].fgDFS)
+				pr_channel_array->channel_array[i].
+					channel_width =
+						ANDROID_WIFI_CHAN_WIDTH_160;
+			else
+				pr_channel_array->channel_array[i].
+					channel_width =
+						ANDROID_WIFI_CHAN_WIDTH_80;
+		}
+#if (CFG_SUPPORT_WIFI_6G == 1)
+		else if (aucChannelList[i].eBand == BAND_6G)
+			pr_channel_array->channel_array[i].channel_width =
+				ANDROID_WIFI_CHAN_WIDTH_160;
+#endif
+		iface_type_copy = iface_type;
+		idx = 0;
+		supported_iface_mask = 0;
+		while (iface_type_copy) {
+			iface = iface_type_copy & BIT(idx);
+			result = isIfaceTypeSupportChannel(prAdapter,
+					iface,
+					filter,
+					aucChannelList[i].eBand,
+					aucChannelList[i].ucChannelNum,
+					u4channel_freq,
+					aucChannelList[i].fgDFS,
+					pau4SafeChnl);
+			if (result == TRUE)
+				supported_iface_mask |= iface;
+			iface_type_copy &= ~(iface);
+			idx++;
+		}
+		pr_channel_array->channel_array[i].iface_mode_mask =
+			supported_iface_mask;
+		if (supported_iface_mask != 0)
+			DBGLOG(REQ, TRACE,
+				"channels[%d], freq %d\n", i, u4channel_freq);
+	}
+	usable_channel_nums = 0;
+	for (i = 0; i < ucNumOfChannel; i++) {
+		if (pr_channel_array->channel_array[i].iface_mode_mask != 0) {
+			pr_channel_array->channel_array[usable_channel_nums] =
+				pr_channel_array->channel_array[i];
+			usable_channel_nums++;
+		}
+	}
+
+	usable_channel_nums = usable_channel_nums > max_size ?
+		max_size : usable_channel_nums;
+
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy,
+		(sizeof(struct ANDROID_USABLE_CHANNEL_UNIT)*
+		usable_channel_nums +
+		sizeof(u16)));
+	if (!skb) {
+		DBGLOG(REQ, ERROR, "Allocate skb failed\n");
+		i4Status = -ENOMEM;
+		goto end;
+	}
+	pr_channel_array->array_size = usable_channel_nums;
+
+	if (unlikely(nla_put(skb,
+		WIFI_ATTRIBUTE_USABLE_CHANNEL_ARRAY,
+		sizeof(struct ANDROID_USABLE_CHANNEL_UNIT)*
+		usable_channel_nums +
+		sizeof(struct ANDROID_USABLE_CHANNEL_ARRAY),
+		pr_channel_array) < 0)) {
+		i4Status = -EINVAL;
+		goto end;
+	}
+
+	kalMemFree(pr_channel_array,
+		sizeof(struct ANDROID_USABLE_CHANNEL_ARRAY),
+		VIR_MEM_TYPE);
+	kalMemFree(prLteSafeChn, VIR_MEM_TYPE,
+			sizeof(struct PARAM_GET_CHN_INFO));
+
+	return cfg80211_vendor_cmd_reply(skb);
+end:
+	if (pr_channel_array)
+		kalMemFree(pr_channel_array,
+			sizeof(struct ANDROID_USABLE_CHANNEL_ARRAY),
+			VIR_MEM_TYPE);
+	if (prLteSafeChn)
+		kalMemFree(prLteSafeChn, VIR_MEM_TYPE,
+				sizeof(struct PARAM_GET_CHN_INFO));
+	kfree_skb(skb);
+	return i4Status;
+}
+
 
 /*----------------------------------------------------------------------------*/
 /*!

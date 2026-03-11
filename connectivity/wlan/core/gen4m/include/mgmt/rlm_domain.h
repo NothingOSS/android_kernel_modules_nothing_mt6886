@@ -78,7 +78,7 @@
  *******************************************************************************
  */
 #if (CFG_SUPPORT_WIFI_6G == 1)
-#define MAX_SUBBAND_NUM     7
+#define MAX_SUBBAND_NUM     8
 #else
 #define MAX_SUBBAND_NUM     6
 #endif
@@ -1124,6 +1124,14 @@ enum ENUM_PWR_CFG_RATE_TAG {
 	PWR_CFG_RATE_TAG_NUM
 };
 
+enum ENUM_REGULATORY_CATEGORY {
+	REG_CAT_NULL = 0,
+	REG_CAT_FCC = 1,
+	REG_CAT_ETSI = 2,
+	REG_CAT_ARIB = 3,
+	REG_CAT_NUM
+};
+
 #if 0
 /* If channel width is CHNL_BW_20_40, the first channel will be SCA and
  * the second channel is SCB, then iteratively.
@@ -1144,7 +1152,6 @@ struct DOMAIN_SUBBAND_INFO {
 struct DOMAIN_INFO_ENTRY {
 	uint16_t u2CountryCode;
 	uint16_t u2MibRegDomainValue;
-
 	/* If different attributes, put them into different rSubBands.
 	 * For example, DFS shall be used or not.
 	 */
@@ -1182,6 +1189,7 @@ struct DOMAIN_INFO_ENTRY {
 	 * For example, DFS shall be used or not.
 	 */
 	struct DOMAIN_SUBBAND_INFO rSubBand[MAX_SUBBAND_NUM];
+	enum ENUM_REGULATORY_CATEGORY eRegCat;
 };
 #endif
 
@@ -1511,6 +1519,8 @@ u_int8_t rlmDomainIsLegalChannel(struct ADAPTER *prAdapter,
 				 enum ENUM_BAND eBand, uint8_t ucChannel);
 u_int8_t rlmDomainIsLegalDfsChannel(struct ADAPTER *prAdapter,
 		enum ENUM_BAND eBand, uint8_t ucChannel);
+u_int8_t rlmDomainIsIndoorChannel(struct ADAPTER *prAdapter,
+				 enum ENUM_BAND eBand, uint8_t ucChannel);
 enum ENUM_CHNL_EXT rlmSelectSecondaryChannelType(
 	struct ADAPTER *prAdapter, enum ENUM_BAND band,
 	u8 primary_ch);
