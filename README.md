@@ -4,3 +4,6 @@
   - Kernel modules path
      - vendor/mediatek/kernel_modules/
 
+2. OS 4.0 (Pacman-B4.0-260225-1817)
+  - No update
+
