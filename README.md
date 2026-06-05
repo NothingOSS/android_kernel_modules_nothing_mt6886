@@ -7,3 +7,6 @@
 2. OS 4.0 (Pacman-B4.0-260225-1817)
   - No update
 
+3. OS 4.1 (Pacman-B4.1-260414-2141)
+  - Improve Wifi
+ 
