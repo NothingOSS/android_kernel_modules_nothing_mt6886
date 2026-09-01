@@ -12,4 +12,7 @@
 
 4. OS 4.1 (Pacman-B4.1-260609-1925)
   - No update
+
+5. OS 4.1 (Pacman-B4.1-260813-0941)
+  - Fix build error for updating GKI to android13-5.15-2026-03_r2
  
