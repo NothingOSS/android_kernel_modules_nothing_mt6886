@@ -387,7 +387,6 @@ void wpa_hexdump_dbg(int level, const char *title, const void *buf, size_t len);
 #define printf(x, y)
 #define rand() (0)
 
-#define in_range(c, lo, up) ((int)c >= lo && (int)c <= up)
 /*/#define isprint(c)           in_range(c, 0x20, 0x7f)*/
 
 /*#define bswap_16(a) ((((u16)(a) << 8) & 0xff00) | (((u16)(a) >> 8) & 0xff))*/
