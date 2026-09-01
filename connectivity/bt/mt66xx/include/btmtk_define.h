@@ -88,8 +88,7 @@
 #define IS_NOT_ALIGN_4(_value)      (((_value) & 0x3) ? TRUE : FALSE)
 #endif /* IS_NOT_ALIGN_4 */
 
-#define MIN(a, b) (((a) < (b)) ? (a) : (b))
-#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+/* MIN and MAX macros removed - use kernel's linux/minmax.h instead (kernel 5.15+) */
 
 
 /**
